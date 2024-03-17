@@ -1,0 +1,10 @@
+__pycache__/
+venv/
+.DS_Store
+.idea/
+ES-500500EU-500kW-500kWh-battery-energy-storage-system.pdf
+kpwslogo.JPG
+scenario.py
+FETCH_HEAD
+README.md
+
