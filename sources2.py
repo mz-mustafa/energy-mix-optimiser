@@ -6,15 +6,17 @@ class Source:
     def __init__(self, name, attributes, units, values, start_year, rating, rating_unit,reserve_perc,priority):
         self.name = name
         # Combine attributes and units for more comprehensive information
+        #TODO put reserve_perc in metadata
         self.metadata = {attr: {'unit': unit, 'value': value} for attr, unit, value in zip(attributes, units, values)}
-        self.ops_data = self._initialize_years()
         self.config = {
             'start_year' : start_year,
             'rating' : rating,
             'rating_unit' : rating_unit,
-            'reserve_perc' : reserve_perc,
             'priority' : priority
         }
+        self.ops_data = self._initialize_years()
+        # Status 0 is off, 1 is on, -1 is downtime, -2 is failure, -3 doesn't exist
+        # for BESS Status 0 is trickel charge, 1 is discharging, 2 is charging, -1 is downtime, -2 is failure, -3 doesn't exist
         
     
     def display_info(self):
@@ -25,6 +27,7 @@ class Source:
         # Initialize yearly data structure
         years_data = {}
         for year in range(1, 13):  # For each of the 12 years
+            is_future = year < self.config['start_year']
             years_data[year] = {
                 'year_potential_failures': 0,
                 'year_failures_mitigated': 0,
@@ -37,11 +40,11 @@ class Source:
                 'year_depreciation': 0,
                 'year_ppa_cost': 0,
                 'year_operation_hours': 0,
-                'months': self._initialize_months()
+                'months': self._initialize_months(is_future)
             }
         return years_data
     
-    def _initialize_months(self):
+    def _initialize_months(self,is_future):
         # Initialize monthly data structure within each year
         months_data = {}
         for month in range(1, 13):  # 12 months
@@ -57,11 +60,11 @@ class Source:
                 'month_depreciation': 0,
                 'month_ppa_cost': 0,
                 'month_operation_hours': 0,
-                'days': self._initialize_days(month)
+                'days': self._initialize_days(month,is_future)
             }
         return months_data
     
-    def _initialize_days(self, month):
+    def _initialize_days(self, month,is_future):
         # Determine the correct number of days for each month
         if month == 2:  # February
             days_in_month = 28
@@ -79,23 +82,30 @@ class Source:
                 'day_energy_output': 0,
                 'failure_occurrence': 0,
                 'failure_mitigation': 0,
-                'pperation_hours': 0,
+                'operation_hours': 0,
                 'downtime': 0,
-                'hours': self._initialize_hours()
+                'hours': self._initialize_hours(is_future)
             }
         return days_data
     
-    def _initialize_hours(self):
+    def _initialize_hours(self,is_future):
         # Initialize hourly data structure within each day
         hours_data = {}
         for hour in range(24):  # 24 hours
+            status = -3 if is_future else 0    
+
             hours_data[hour] = {
                 'power_capacity': 0,
                 'power_output': 0,
                 'energy_output': 0,
-                'status': ''
+                'status': status
             }
         return hours_data
+
+    #TO DO - need to add a function that seeds lower output from R sources based on a metadata field
+    #this seeding can be with 0.5 status, which should be based on reduction between n-1 and n hours.
+    #so find negative deltas and on a random basis assign 0.5 assuming that that change is sudden.
+    #we can assume 
 
     def seed_availabilty(self):
         for year, year_data in self.ops_data.items():
@@ -152,19 +162,39 @@ class Source:
                 year_data['year_potential_failures'] += month_data['month_potential_failures']
                 year_data['year_downtime'] += month_data['month_downtime']   
 
-    def power_capacity(self,yr,mon,day,hr):
-        
-        #the way power output is calculated will be based on the src type
+    def update_power_capacity(self):
+        for year, year_data in self.ops_data.items():
+            # Calculate years of operation differently, considering each year as present during iteration
+            years_of_operation = year - self.config['start_year']
+            
+            if years_of_operation < 0:
+                continue  # Skip years before the source's start year
 
-        #for captive it will be capacity consider. degradation per year and also reserve_perc
-        
-        #we will need to add fields like units in operation to hour level dicts to capture captive spin reserve and assoc costs
-        
-        #for thermal ppa it will be mainly output capacity
+            for month, month_data in year_data['months'].items():
+                for day, day_data in month_data['days'].items():
+                    for hour, hour_data in day_data['hours'].items():
+                        power_capacity = 0
 
-        #for solar it will be based on time of day and will need to use Project data
+                        if self.metadata['type']['value'] == 'NR' and self.metadata['finance']['value'] == 'PPA':
+                            power_capacity = self.config['rating']
 
-        return True
+                        elif self.metadata['type']['value'] == 'NR' and self.metadata['finance']['value'] == 'CAPTIVE':
+                            # Check for 'annual_degradation' key in metadata
+                            if 'annual_degradation' in self.metadata:
+                                annual_degradation_rate = self.metadata['annual_degradation']['value']
+                                # Apply annual degradation
+                                degraded_rating = self.config['rating'] * ((1 - annual_degradation_rate) ** years_of_operation)
+                                power_capacity = degraded_rating
+
+                        elif self.metadata['type']['value'] == 'R':
+                            # Use solar profile for renewable sources
+                            # Assuming the Project class and solar_profile structure allows this direct access
+                            solar_output = Project.solar_profile[month][day][hour]
+                            power_capacity = (solar_output / 5) * self.config['rating']
+
+                        # Update power_capacity for the hour
+                        hour_data['power_capacity'] = power_capacity
+
 
 class SourceManager:
     def __init__(self, file_path):

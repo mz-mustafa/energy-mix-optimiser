@@ -11,7 +11,7 @@ class Project:
 
     #TO DO add try catch here.
     @classmethod
-    def read_input_data(cls, folder_path):
+    def read_load_projection(cls, folder_path):
         input_file_path = os.path.join(folder_path, 'input_data.xlsx')
         try:
             # Read 'site_load' worksheet for site_data
@@ -39,13 +39,10 @@ class Project:
             raise
     #TO DO add try catch here.
     @classmethod
-    def load_data_from_folder(cls,folder_path):
+    def read_load_solar_data_from_folder(cls,folder_path):
         for month in range(1, 13):
             file_name = f'load_{month:02d}.xlsx'
             file_path = os.path.join(folder_path, file_name)
-
-            cls.load_data[month] = {}
-            cls.solar_data[month] = {}
 
             try:
                 xls = pd.ExcelFile(file_path)
@@ -56,8 +53,8 @@ class Project:
                     if data.isnull().values.any():
                         print(f"Warning: Blank values found in {file_name}, sheet {day}")
 
-                    cls.load_data[month][int(day)] = data[1].tolist()
-                    cls.solar_data[month][int(day)] = data[2].tolist()
+                    cls.load_profile[month][int(day)] = data[1].tolist()
+                    cls.solar_profile[month][int(day)] = data[2].tolist()
 
                 print(f"Successfully read {file_name}. Days found: {len(days_of_month)}")
 
