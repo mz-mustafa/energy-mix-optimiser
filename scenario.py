@@ -12,10 +12,20 @@ class Scenario:
         self.client_name = client_name
         self.timestamp = datetime.datetime.now()
         self.src_list = selected_sources
-        self.results = {y: {m: {d: {h: {'unserved_power_req': 0} for h in range(24)} 
-                               for d in range(1, 32)} 
-                          for m in range(1, 13)} 
-                     for y in range(1, 13)}
+        self.results = {
+            y: {
+                m: {
+                    d: {
+                        h: {
+                            'unserved_power_req': 0,
+                            'sudden_power_drop' : 0,
+                            'unserved_power_drop' : 0,
+                            'load_shed' : 0,
+                            'log' : 0
+                            } for h in range(24)
+                        } for d in range(1, 32)
+                    } for m in range(1, 13)
+                } for y in range(1, 13)}
 
     
     def has_stable_source(self,year):
@@ -48,49 +58,57 @@ class Scenario:
                     return True  # Found at least one stable source meeting the criteria
         return False  # No renewable source found meeting the criteria
 
-    def calc_src_power_and_energy(self,y,m,d,h,power_req):
-        #TO DO probably need to exclude BESS sources here
-        for priority, sources in groupby(self.src_list, key=lambda x: x.config['priority']):
-            sources = list(sources)
+    def calc_src_power_and_energy(self, y, m, d, h, power_req):
+
+        sudden_power_drop = 0
+        # Sort sources by priority for processing
+        sorted_sources = sorted(self.src_list, key=lambda x: x.config['priority'])
+        # Group sources by priority
+        for priority, group in groupby(sorted_sources, key=lambda x: x.config['priority']):
+            sources = list(group)
+            if not sources:
+                continue  # Skip empty groups
             
+            # Use spinning reserve requirements from the first source in the group
             spinning_reserve_req = sources[0].metadata.get('spinning_reserve', {'value': 0})['value']
             current_power_output = 0
             current_power_capacity = 0
+            current_spinning_reserve = 0
             
             for src in sources:
-                if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] in [-1, -2, -3]:
-                    continue  # Source is not available
-
-                max_loading = src.metadata.get('max_loading', {'value': src.config['rating']})['value'] * src.config['rating']
-                power_capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                status = src.ops_data[y][m][d][h]['status']
+                if status in [-2, -3]:  # Source is not available
+                    continue
                 
-                # Calculate potential contribution without exceeding max_loading or remaining power requirement
-                potential_power_output = min(max_loading, power_req - current_power_output, power_capacity)
+                # Calculate adjusted capacity based on max loading
+                power_capacity = src.ops_data[y][m][d][h]['power_capacity']
+                max_loading_percentage = src.metadata.get('max_loading', {'value': 1})['value']
+                adjusted_capacity = power_capacity * max_loading_percentage
                 
-                # Update only if it contributes to meeting power requirement
-                if potential_power_output > 0:
-                    current_power_output += potential_power_output
-                    current_power_capacity += power_capacity
-
-                # Check if power requirement and spinning reserve are met
-                if current_power_output >= power_req and (current_power_capacity - current_power_output) >= spinning_reserve_req:
-                    # Update ops_data for selected sources and stop selection for this group
-                    break
-
-            # Update ops_data for sources considered in this group
-            for src in sources:
-                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = potential_power_output
-                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = potential_power_output  # Assuming same as power_output
-                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] = 1
-                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = power_capacity - potential_power_output
+                # Include operational sources and simulate output for sources about to fail or reduce output
+                if status in [1, -1, 0.5]:
+                    if status == -1 or status == 0.5:
+                        # Calculate sudden power drop for failing or reducing output sources
+                        sudden_power_drop += adjusted_capacity
+                        # Assume output remains the same for status 0.5 sources
+                        if status == 0.5:
+                            adjusted_capacity = src.ops_data[y][m][d][h-1]['power_output']
+                    
+                    # Calculate contribution proportionally
+                    contribution = min(adjusted_capacity, power_req - current_power_output)
+                    current_power_output += contribution
+                    current_spinning_reserve += power_capacity - contribution  # Update spinning reserve
+                    
+                    # Record contributions
+                    src.ops_data[y][m][d][h]['power_output'] = contribution
+                    src.ops_data[y][m][d][h]['energy_output'] = contribution  # Assuming same as power_output
+                    src.ops_data[y][m][d][h]['spin_reserve'] = power_capacity - contribution  # Update spinning reserve
             
-            # If the power requirement is met or exceeded, adjust for next group consideration
-            power_req = min(0,power_req - current_power_output)
-            if power_req == 0:
-                
-                break  # Exit the function if no more power is needed
+            # Adjust power requirement based on the total output
+            power_req = max(0,power_req - current_power_output)
+            
+        return power_req, sudden_power_drop
 
-        return power_req  # Return the unmet power requirement, if any
 
 
     def simulate(self):
@@ -110,6 +128,7 @@ class Scenario:
 
                     for h in range (0,24):
 
+                        hourly_results = self.results[y][m][d][h]
                         #set the power requirement
                         power_req = Project.load_data[y][m][d][h]
                         #may also include BESS charging
@@ -124,36 +143,20 @@ class Scenario:
                                     power_req += src.config['rating'] * 0.5
                         
                         #Consumption of sources, update key results in the scenario
-                        self.results[y][m][d][h]['unserved_power_req'] = self.calc_src_power_and_energy(y,m,d,h,power_req)
-                        
-                        #Can this configuration meet the ramp requirements
-                        for src in self.src_list:
+                        unserved_power_req, sudden_power_drop = self.calc_src_power_and_energy(y,m,d,h,power_req)
+                        unserved_power_drop = 0
+                        load_shed = 0
 
-                            if src.metadata['type']['value'] != 'BESS' and src.ops_data[y][m][d][h]['status'] == -1:
-                                a = 'Todo'
-                                #then we need to know the power rating of the source and add it all up.
-                                #sources that have failed just now would be what we should have reserve for.
-                            if src.metadata['type']['value'] != 'R' and src.ops_data[y][m][d][h]['status'] == 0.5:
-                                a = 'Todo'
-                                #then find delta between h-1 and h and add it to sudden_drop variable.    
+                        if unserved_power_req <= 0 and sudden_power_drop > 0:
 
-                        #Afther this loop we have the sudden_drop variable and now we need to see if config can serve it.
-                        #this check can be in a seperate function.
-                        
-                        #Use the sorted sources list, form groups.
-                        #for the group calc. the spinning reserve
-                        #we know the perc of src rating that the group src can take within 4 seconds.
-                        #compare this number to the spin reserve
-                        #Need to correct, below not fully right.
-                        #if spin reserve high, find spin reserve - sudden_drop and load src in group propotionally, exit function
-                        #if spin reserve lower, load srcs to full, reduce sudden_drop try with rem src until sudden_drop 0 or end of srcs
-                        #if we reach end of srcs and sudden_drop still remains, then we can assume load failure.
-                        #record this in the scenario results.
-                                
-                        #BESS will have a key role in the above.
-                        #If BESS present and charging, then use it to gain bonus reduction in sudden_drop equal to its max. op
-                        #which is 500kW per unit
-                        #but then make its next two hours charging. (so it can't come to the rescue until charged again)
+                            unserved_power_drop,load_shed = self.handle_sudden_power_drop(self, y, m, d, h, sudden_power_drop)
+
+                
+                        hourly_results['unserved_power_req'] = unserved_power_req
+                        hourly_results['sudden_power_drop'] = sudden_power_drop
+                        hourly_results['unserved_power_drop'] = unserved_power_drop
+                        hourly_results['load_shed'] = load_shed
+                        hourly_results['log'] = self.generate_log(self,y,m,d,h,unserved_power_req, unserved_power_drop,load_shed)
 
 
                     #cost calc. at the end, summed to be year level, will then be checked again min off-take.
@@ -182,7 +185,82 @@ class Scenario:
         #after running through the sources, calc number of load failures from results.
         #use that and the per loss value to determine the loss (this can be in propotion to shortfall with critical load?)
         #in results, if there unfed demand then that should also be used (in propotion) to calculate further loss.
-                
+    
+    def handle_sudden_power_drop(self, y, m, d, h, initial_deficit_power):
+        deficit_power = initial_deficit_power
+        load_shed = 0
+
+        # Sort sources by block_load_acceptance for effective grouping
+        self.src_list.sort(key=lambda src: src.metadata.get('block_load_acceptance', {'value': 0})['value'])
+        
+        # Group sources by their block_load_acceptance, considering only operational sources
+        for block_acceptance, group in groupby(self.src_list, key=lambda src: src.metadata.get('block_load_acceptance', {'value': 0})['value']):
+            sources = list(filter(lambda src: src.ops_data[y][m][d][h]['status'] == 1, list(group)))
+            if not sources:
+                continue  # Skip groups with no operational sources
+
+            src_group_block_acceptance, src_group_spin_reserve = self.distribute_deficit_among_sources(y, m, d, h, sources, deficit_power)
+
+            # Calculate the remaining deficit after distribution
+            deficit_power = max(0, deficit_power - src_group_block_acceptance)
+            
+            if deficit_power <= 0:
+                # If the deficit is fully covered, exit the loop
+                break
+
+        if deficit_power > 0:
+            # If there's still a deficit, consider load shedding
+            load_shed = min(self.sheddable_load, deficit_power)
+            self.sheddable_load -= load_shed  # Update the sheddable load
+            deficit_power -= load_shed  # Adjust the deficit after shedding
+
+        return deficit_power, load_shed
+
+    def distribute_deficit_among_sources(self, y, m, d, h, sources, deficit, block_acceptance):
+
+        src_group_block_acceptance = sum(src.config['rating'] * (block_acceptance / 100) for src in sources)
+        src_group_spin_reserve = sum(src.ops_data[y][m][d][h]['spin_reserve'] for src in sources)
+
+        # Calculate how much of the deficit can be covered
+        contribution = min(src_group_block_acceptance, deficit, src_group_spin_reserve)
+
+        for src in sources:
+
+            # Calculate each source's contribution based on its block load acceptance
+            src_contribution = (src.config['rating'] * (block_acceptance / 100)) / src_group_block_acceptance * contribution
+            src.ops_data[y][m][d][h]['power_output'] += src_contribution
+            src.ops_data[y][m][d][h]['spin_reserve'] -= src_contribution  # Adjust spin reserve
+
+        return src_group_block_acceptance, src_group_spin_reserve
+    
+    def generate_log(self, y, m, d, h, unserved_power_req, deficit_power,load_shed):
+
+        # Identifying failed and reduced output sources
+        failed_sources = [src for src in self.src_list if src.ops_data[y][m][d][h]['status'] == -1]
+        reduced_output_sources = [src for src in self.src_list if src.ops_data[y][m][d][h]['status'] == 0.5]
+        
+        # Constructing the explanation message
+        log_parts = []
+
+        if unserved_power_req > 0:
+
+            full_explanation = f"Total power requirements could not be satisfied. Shortfall = {unserved_power_req} MW"
+            return full_explanation
+    
+        if failed_sources:
+
+            log_parts.append("Failures in sources " + ", ".join([f"{src.config['rating']} {src.config['rating_unit']} {src.name}" for src in failed_sources]))
+        
+        if reduced_output_sources:
+
+            log_parts.append("sudden reductions in sources " + ", ".join([f"{src.config['rating']} {src.config['rating_unit']} {src.name}" for src in reduced_output_sources]))
+        if load_shed > 0:
+
+            log_parts.append(f"{load_shed} MW load was shed")
+
+        # Combine all parts for the final explanation
+        full_log = "; ".join(log_parts)
+        return full_log
 
 
 

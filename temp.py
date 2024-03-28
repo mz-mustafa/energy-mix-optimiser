@@ -399,3 +399,78 @@ class Scenario:
                         f"Energy data for the year {year}, month {month} determined. Unserved is {month_rem_enr_req} MWh")
             self.energy_df = pd.DataFrame(self.energy_df)
 
+#Can this configuration meet the ramp requirements
+                        ramp_power_comp = 0
+                        for src in self.src_list:
+
+                            src_day_data = src.ops_data[y][m][d]
+
+                            if src.metadata['type']['value'] != 'BESS' and src_day_data[h]['status'] == -1 and src_day_data[h-1]['status'] == 1:
+
+                                prev_output = src_day_data[h-1]['power_output']
+                                ramp_power_comp += prev_output
+                                
+                                #then we need to know the power rating of the source and add it all up.
+                                #sources that have failed just now would be what we should have reserve for.
+                            if src.metadata['type']['value'] == 'R' and src.ops_data[y][m][d][h]['status'] == 0.5:
+                                
+                                #then find delta between h-1 and h and add it to sudden_drop variable.  
+                                ramp_power_comp += src_day_data[h-1] - src_day_data[h-1]
+
+    def calc_src_power_and_energy(self,y,m,d,h,power_req):
+        #TO DO probably need to exclude BESS sources here
+        sudden_power_drop = 0
+        for priority, sources in groupby(self.src_list, key=lambda x: x.config['priority']):
+            sources = list(sources)
+            
+            spinning_reserve_req = sources[0].metadata.get('spinning_reserve', {'value': 0})['value']
+            current_power_output = 0
+            current_power_capacity = 0
+            
+            for src in sources:
+                if src.ops_data[y][m][d][h]['status'] in [-2, -3]:
+                    continue  # Source is not available
+                    
+                max_loading = src.metadata.get('max_loading', {'value': src.config['rating']})['value'] * src.config['rating']
+                power_capacity = src.ops_data[y][m][d][h]['power_capacity']
+                
+                # Calculate potential contribution without exceeding max_loading or remaining power requirement
+                potential_power_output = min(max_loading, power_req - current_power_output, power_capacity)
+                
+                #if source will failin this hour then add its potential output to the sudden drop we must serve and skip the source
+                if src.ops_data[y][m][d][h]['status'] == -1:
+                    sudden_power_drop += potential_power_output
+                    continue
+
+                #if its solar and it will drop output then record its drop
+                elif src.ops_data[y][m][d][h]['status'] == 0.5:
+                    solar_output_drop = min(0,src.ops_data[y][m][d][h-1]['power_output'] - potential_power_output)
+                    sudden_power_drop += solar_output_drop
+                    continue
+
+                # Update only if it contributes to meeting power requirement
+                if potential_power_output > 0:
+                    current_power_output += potential_power_output
+                    current_power_capacity += power_capacity
+
+                # Check if power requirement and spinning reserve are met
+                if current_power_output >= power_req and (current_power_capacity - current_power_output) >= spinning_reserve_req:
+                    # Update ops_data for selected sources and stop selection for this group
+                    break
+            
+            #TODO here, seem to be assigning the same power oputput to all sources in the group, assuming that ehy are equal
+            #TODO we are also not checking open assignment if the source if off.
+            # Update ops_data for sources considered in this group
+            for src in sources:
+                src.ops_data[y][m][d][h]['power_output'] = potential_power_output
+                src.ops_data[y][m][d][h]['energy_output'] = potential_power_output  # Assuming same as power_output
+                src.ops_data[y][m][d][h]['status'] = 1
+                src.ops_data[y][m][d][h]['spin_reserve'] = power_capacity - potential_power_output
+            
+            # If the power requirement is met or exceeded, adjust for next group consideration
+            power_req = min(0,power_req - current_power_output)
+            if power_req == 0:
+                
+                break  # Exit the function if no more power is needed
+
+        return power_req, sudden_power_drop  # Return the unmet power requirement, if any

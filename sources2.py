@@ -3,16 +3,18 @@ import random
 from project import Project
 
 class Source:
-    def __init__(self, name, attributes, units, values, start_year, rating, rating_unit,reserve_perc,priority):
+    def __init__(self, name, attributes, units, values, start_year, rating, rating_unit,reserve_perc,priority,min_loading,max_loading):
         self.name = name
-        # Combine attributes and units for more comprehensive information
         #TODO put reserve_perc in metadata
+        #TODO put solar_sudden_drops in metadata
         self.metadata = {attr: {'unit': unit, 'value': value} for attr, unit, value in zip(attributes, units, values)}
         self.config = {
             'start_year' : start_year,
             'rating' : rating,
             'rating_unit' : rating_unit,
-            'priority' : priority
+            'priority' : priority,
+            'min_loading': min_loading,
+            'max_loading': max_loading,
         }
         self.ops_data = self._initialize_years()
         # Status 0 is off, 1 is on, -1 is downtime, -2 is failure, -3 doesn't exist
@@ -24,11 +26,11 @@ class Source:
             print(f"{attr} ({info['unit']}): {info['value']}")
 
     def _initialize_years(self):
-        # Initialize yearly data structure
         years_data = {}
-        for year in range(1, 13):  # For each of the 12 years
+        for year in range(1, 13):
             is_future = year < self.config['start_year']
-            years_data[year] = {
+            year_dict = {
+                'source_present': 0 if is_future else 1,
                 'year_potential_failures': 0,
                 'year_failures_mitigated': 0,
                 'year_downtime': 0,
@@ -40,15 +42,17 @@ class Source:
                 'year_depreciation': 0,
                 'year_ppa_cost': 0,
                 'year_operation_hours': 0,
-                'months': self._initialize_months(is_future)
+                'months': {}
             }
+            year_dict['months'] = self._initialize_months(year, is_future)
+            years_data[year] = year_dict
         return years_data
-    
-    def _initialize_months(self,is_future):
-        # Initialize monthly data structure within each year
+
+    def _initialize_months(self, year, is_future):
         months_data = {}
-        for month in range(1, 13):  # 12 months
-            months_data[month] = {
+        for month in range(1, 13):
+            days_in_month = 28 if month == 2 else 30 if month in [4, 6, 9, 11] else 31
+            month_dict = {
                 'month_potential_failures': 0,
                 'month_failures_mitigated': 0,
                 'month_downtime': 0,
@@ -60,22 +64,16 @@ class Source:
                 'month_depreciation': 0,
                 'month_ppa_cost': 0,
                 'month_operation_hours': 0,
-                'days': self._initialize_days(month,is_future)
+                'days': {}
             }
+            month_dict['days'] = self._initialize_days(year, month, is_future, days_in_month)
+            months_data[month] = month_dict
         return months_data
-    
-    def _initialize_days(self, month,is_future):
-        # Determine the correct number of days for each month
-        if month == 2:  # February
-            days_in_month = 28
-        elif month in [4, 6, 9, 11]:  # April, June, September, November
-            days_in_month = 30
-        else:  # All other months
-            days_in_month = 31
 
+    def _initialize_days(self, year, month, is_future, days_in_month):
         days_data = {}
         for day in range(1, days_in_month + 1):
-            days_data[day] = {
+            day_dict = {
                 'avg_power_output': 0,
                 'min_power_output': 0,
                 'max_power_output': 0,
@@ -86,14 +84,13 @@ class Source:
                 'downtime': 0,
                 'hours': self._initialize_hours(is_future)
             }
+            days_data[day] = day_dict
         return days_data
-    
-    def _initialize_hours(self,is_future):
-        # Initialize hourly data structure within each day
-        hours_data = {}
-        for hour in range(24):  # 24 hours
-            status = -3 if is_future else 0    
 
+    def _initialize_hours(self, is_future):
+        hours_data = {}
+        status = -3 if is_future else 0
+        for hour in range(24):
             hours_data[hour] = {
                 'power_capacity': 0,
                 'power_output': 0,
@@ -102,11 +99,39 @@ class Source:
             }
         return hours_data
 
-    #TO DO - need to add a function that seeds lower output from R sources based on a metadata field
-    #this seeding can be with 0.5 status, which should be based on reduction between n-1 and n hours.
-    #so find negative deltas and on a random basis assign 0.5 assuming that that change is sudden.
-    #we can assume 
-
+    def seed_solar_disturbances(self):
+        # Ensure this function only applies to renewable sources
+        if self.metadata['type']['value'] != 'R':
+            print("This function is only applicable to renewable sources.")
+            return
+        
+        for year, year_data in self.ops_data.items():
+            if year_data.get('source_present') == 0:
+                continue  # Skip non-existent years for this source
+            
+            for month, month_data in year_data['months'].items():
+                for day, day_data in month_data['days'].items():
+                    daily_hours_to_flag = self.metadata.get('solar_sudden_drops', {'value': 0})['value']
+                    if daily_hours_to_flag <= 0:
+                        continue  # Skip if no disturbances are to be seeded
+                    
+                    candidate_hours = []  # Hours eligible for being flagged
+                    
+                    for hour in range(24):
+                        if day_data['hours'][hour]['status'] != 1:
+                            continue  # Skip hours not in operation
+                        
+                        # Check for a negative power output delta between h and h-1
+                        if hour > 0 and day_data['hours'][hour]['power_output'] < day_data['hours'][hour - 1]['power_output']:
+                            candidate_hours.append(hour)
+                    
+                    # Randomly select hours to flag, up to the daily limit
+                    hours_to_flag = random.sample(candidate_hours, min(len(candidate_hours), daily_hours_to_flag))
+                    
+                    for hour in hours_to_flag:
+                        day_data['hours'][hour]['status'] = 0.5  # Flag as sudden power reduction 
+    #TODO make sure hour 0 is never seeded
+    #TODO only seed hours for years in which source is available (check year level attribute)
     def seed_availabilty(self):
         for year, year_data in self.ops_data.items():
             days_of_year = []
@@ -140,7 +165,7 @@ class Source:
                     year_data['months'][month]['days'][day]['Hours'][fail_hour]['Status'] = -1
                     downtime -= 1
         self.aggregate_availability()
-
+    #TODO skip years in which source is not present
     def aggregate_availability(self):
         # Iterate through all levels of data to update day, month, and year aggregates
         for year, year_data in self.ops_data.items():
@@ -164,6 +189,7 @@ class Source:
 
     def update_power_capacity(self):
         for year, year_data in self.ops_data.items():
+            #TODO instead of calc, just use year level ops data parameter
             # Calculate years of operation differently, considering each year as present during iteration
             years_of_operation = year - self.config['start_year']
             
