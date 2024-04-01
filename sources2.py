@@ -3,23 +3,34 @@ import random
 from project import Project
 
 class Source:
-    def __init__(self, name, attributes, units, values, start_year, rating, rating_unit,reserve_perc,priority,min_loading,max_loading):
+    def __init__(self, name, attributes, units, values):
         self.name = name
-        #TODO put reserve_perc in metadata
-        #TODO put solar_sudden_drops in metadata
+        self.attributes = attributes
+        self.units = units
+        self.values = values
         self.metadata = {attr: {'unit': unit, 'value': value} for attr, unit, value in zip(attributes, units, values)}
-        self.config = {
-            'start_year' : start_year,
-            'rating' : rating,
-            'rating_unit' : rating_unit,
-            'priority' : priority,
-            'min_loading': min_loading,
-            'max_loading': max_loading,
-        }
-        self.ops_data = self._initialize_years()
-        # Status 0 is off, 1 is on, -1 is downtime, -2 is failure, -3 doesn't exist
+        self.config = {}
+        self.ops_data = {}
+        # Status 0 is off, 1 is on, -2 is downtime, -1 is failure, -3 doesn't exist
         # for BESS Status 0 is trickel charge, 1 is discharging, 2 is charging, -1 is downtime, -2 is failure, -3 doesn't exist
         
+    def configure(self, start_year, end_year, rating, rating_unit, spin_reserve, priority, min_loading, max_loading):
+        # Update the config dictionary with new key-value pairs
+        self.config['start_year'] = start_year
+        self.config['end_year'] = end_year
+        self.config['rating'] = rating
+        self.config['rating_unit'] = rating_unit
+        self.config['priority'] = priority
+        self.config['min_loading'] = min_loading
+        self.config['max_loading'] = max_loading
+        self.config['spinning_reserve'] = spin_reserve
+        # Example calculation for 'capex', assumes 'capital_cost_baseline' is in metadata and 'inflation_rate' is available
+        self.config['capex'] = rating * self.metadata.get('capital_cost_baseline', {'value': 0})['value'] * (1 + Project.inflation_rate)**(start_year-1)
+        self.ops_data = self._initialize_years()
+        self.update_power_capacity()
+        self.seed_failures()
+        self.seed_solar_reductions()
+        self.aggregate_failure_reduction_stats()
     
     def display_info(self):
         for attr, info in self.data.items():
@@ -28,11 +39,14 @@ class Source:
     def _initialize_years(self):
         years_data = {}
         for year in range(1, 13):
-            is_future = year < self.config['start_year']
+            if year >= self.config['start_year'] and year <= self.config['end_year']:
+                exists = True
+            else:
+                exists = False
             year_dict = {
-                'source_present': 0 if is_future else 1,
-                'year_potential_failures': 0,
-                'year_failures_mitigated': 0,
+                'source_present': 1 if exists else 0,
+                'year_failures': 0,
+                'year_reductions' : 0,
                 'year_downtime': 0,
                 'year_energy_output': 0,
                 'year_cost_of_operation': 0,
@@ -44,33 +58,32 @@ class Source:
                 'year_operation_hours': 0,
                 'months': {}
             }
-            year_dict['months'] = self._initialize_months(year, is_future)
+            year_dict['months'] = self._initialize_months(year, exists)
             years_data[year] = year_dict
         return years_data
 
-    def _initialize_months(self, year, is_future):
+    def _initialize_months(self, year, exists):
         months_data = {}
         for month in range(1, 13):
             days_in_month = 28 if month == 2 else 30 if month in [4, 6, 9, 11] else 31
             month_dict = {
-                'month_potential_failures': 0,
-                'month_failures_mitigated': 0,
+                'month_failures': 0,
+                'month_reductions' : 0,
                 'month_downtime': 0,
                 'month_energy_output': 0,
                 'month_cost_of_operation': 0,
                 'month_fuel_cost': 0,
                 'month_fixed_opex': 0,
                 'month_var_opex': 0,
-                'month_depreciation': 0,
                 'month_ppa_cost': 0,
                 'month_operation_hours': 0,
                 'days': {}
             }
-            month_dict['days'] = self._initialize_days(year, month, is_future, days_in_month)
+            month_dict['days'] = self._initialize_days(year, month, exists, days_in_month)
             months_data[month] = month_dict
         return months_data
 
-    def _initialize_days(self, year, month, is_future, days_in_month):
+    def _initialize_days(self, year, month, exists, days_in_month):
         days_data = {}
         for day in range(1, days_in_month + 1):
             day_dict = {
@@ -78,51 +91,51 @@ class Source:
                 'min_power_output': 0,
                 'max_power_output': 0,
                 'day_energy_output': 0,
-                'failure_occurrence': 0,
-                'failure_mitigation': 0,
+                'failure_events': 0,
+                'reduction_events' : 0,
                 'operation_hours': 0,
                 'downtime': 0,
-                'hours': self._initialize_hours(is_future)
+                'hours': self._initialize_hours(exists)
             }
             days_data[day] = day_dict
         return days_data
 
-    def _initialize_hours(self, is_future):
+    def _initialize_hours(self, exists):
         hours_data = {}
-        status = -3 if is_future else 0
+        status = 0 if exists else -3
         for hour in range(24):
             hours_data[hour] = {
                 'power_capacity': 0,
                 'power_output': 0,
                 'energy_output': 0,
+                'spin_reserve' : 0,
                 'status': status
             }
         return hours_data
 
-    def seed_solar_disturbances(self):
+    def seed_solar_reductions(self):
         # Ensure this function only applies to renewable sources
         if self.metadata['type']['value'] != 'R':
-            print("This function is only applicable to renewable sources.")
             return
         
+        daily_hours_to_flag = self.metadata.get('solar_sudden_drops', {'value': 0})['value']
+
+        if daily_hours_to_flag <= 0:
+            return  # Skip if no disturbances are to be seeded
+
         for year, year_data in self.ops_data.items():
             if year_data.get('source_present') == 0:
                 continue  # Skip non-existent years for this source
             
             for month, month_data in year_data['months'].items():
                 for day, day_data in month_data['days'].items():
-                    daily_hours_to_flag = self.metadata.get('solar_sudden_drops', {'value': 0})['value']
-                    if daily_hours_to_flag <= 0:
-                        continue  # Skip if no disturbances are to be seeded
                     
-                    candidate_hours = []  # Hours eligible for being flagged
+                    candidate_hours = []  # hours eligible for being flagged
                     
-                    for hour in range(24):
-                        if day_data['hours'][hour]['status'] != 1:
-                            continue  # Skip hours not in operation
+                    for hour in range(1,24):
                         
                         # Check for a negative power output delta between h and h-1
-                        if hour > 0 and day_data['hours'][hour]['power_output'] < day_data['hours'][hour - 1]['power_output']:
+                        if hour > 0 and day_data['hours'][hour]['power_capacity'] < day_data['hours'][hour - 1]['power_capacity']:
                             candidate_hours.append(hour)
                     
                     # Randomly select hours to flag, up to the daily limit
@@ -130,23 +143,29 @@ class Source:
                     
                     for hour in hours_to_flag:
                         day_data['hours'][hour]['status'] = 0.5  # Flag as sudden power reduction 
-    #TODO make sure hour 0 is never seeded
-    #TODO only seed hours for years in which source is available (check year level attribute)
-    def seed_availabilty(self):
+    
+    def seed_failures(self):
+
+        annual_fails = self.metadata['num_annual_fails']['value']
+        if annual_fails <= 0:
+            return
         for year, year_data in self.ops_data.items():
+
+            if year_data.get('source_present') == 0:
+                continue  # Skip non-existent years for this source
             days_of_year = []
             # Generate a flat list of all day-hour combinations
             for month, month_data in year_data['months'].items():
                 for day, day_data in month_data['days'].items():
-                    for hour in range(24):
+                    for hour in range(1,24):
                         days_of_year.append((month, day, hour))
             
             # Randomly select days for failures, ensuring unique days
-            failure_days = random.sample(days_of_year, self.metadata['num_annual_fails']['value'])
+            failure_days = random.sample(days_of_year, annual_fails)
 
             for month, day, fail_hour in failure_days:
                 # Mark the failure hour
-                year_data['months'][month]['days'][day]['Hours'][fail_hour]['Status'] = -2
+                year_data['months'][month]['days'][day]['hours'][fail_hour]['status'] = -1
                 
                 # Apply downtime for subsequent hours
                 downtime = self.metadata['downtime_per_fail']['value'] - 1
@@ -162,39 +181,44 @@ class Source:
                             # Reset to January if the month exceeds the year
                             if month > 12:
                                 month = 1
-                    year_data['months'][month]['days'][day]['Hours'][fail_hour]['Status'] = -1
+                    year_data['months'][month]['days'][day]['hours'][fail_hour]['status'] = -2
                     downtime -= 1
-        self.aggregate_availability()
-    #TODO skip years in which source is not present
-    def aggregate_availability(self):
+
+    def aggregate_failure_reduction_stats(self):
         # Iterate through all levels of data to update day, month, and year aggregates
         for year, year_data in self.ops_data.items():
+
+            if year_data.get('source_present') == 0:
+                continue  # Skip non-existent years for this source
+
             for month, month_data in year_data['months'].items():
                 for day, day_data in month_data['days'].items():
                     # Count the failure occurrences and downtime at the day level
-                    failure_occurrence = sum(1 for hour in day_data['Hours'].values() if hour['Status'] == -2)
-                    downtime = sum(1 for hour in day_data['Hours'].values() if hour['Status'] == -1) + failure_occurrence
-                    
+                    failure_occurrence = sum(1 for hour in day_data['hours'].values() if hour['status'] == -1)
+                    downtime = sum(1 for hour in day_data['hours'].values() if hour['status'] == -2) + failure_occurrence
+                    reductions = sum(1 for hour in day_data['hours'].values() if hour['status'] == 0.5)
                     # Update day level data
-                    day_data['Failure_occurrence'] = failure_occurrence
-                    day_data['Downtime'] = downtime
+                    day_data['failure_events'] = failure_occurrence
+                    day_data['downtime'] = downtime
+                    day_data['reduction_events'] = reductions
                     
                     # Accumulate counts for the month level data
-                    month_data['month_potential_failures'] += failure_occurrence
+                    month_data['month_failures'] += failure_occurrence
                     month_data['month_downtime'] += downtime
+                    month_data['month_reductions'] += reductions
                 
                 # Accumulate counts for the year level data
-                year_data['year_potential_failures'] += month_data['month_potential_failures']
-                year_data['year_downtime'] += month_data['month_downtime']   
+                year_data['year_failures'] += month_data['month_failures']
+                year_data['year_downtime'] += month_data['month_downtime']
+                year_data['year_reductions'] += month_data['month_reductions']    
 
     def update_power_capacity(self):
         for year, year_data in self.ops_data.items():
-            #TODO instead of calc, just use year level ops data parameter
-            # Calculate years of operation differently, considering each year as present during iteration
-            years_of_operation = year - self.config['start_year']
+
+            if year_data.get('source_present') == 0:
+                continue  # Skip non-existent years for this source
             
-            if years_of_operation < 0:
-                continue  # Skip years before the source's start year
+            years_of_operation = year - self.config['start_year'] 
 
             for month, month_data in year_data['months'].items():
                 for day, day_data in month_data['days'].items():
@@ -209,7 +233,7 @@ class Source:
                             if 'annual_degradation' in self.metadata:
                                 annual_degradation_rate = self.metadata['annual_degradation']['value']
                                 # Apply annual degradation
-                                degraded_rating = self.config['rating'] * ((1 - annual_degradation_rate) ** years_of_operation)
+                                degraded_rating = self.config['rating'] * ((1 - (annual_degradation_rate/100)) ** years_of_operation)
                                 power_capacity = degraded_rating
 
                         elif self.metadata['type']['value'] == 'R':
@@ -221,11 +245,84 @@ class Source:
                         # Update power_capacity for the hour
                         hour_data['power_capacity'] = power_capacity
 
+    #TODO add degradation here, check if exists in metadata.
+    def adjusted_capacity(self,y,m,d,h):
+
+        src_capacity = self.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+        max_loading_percentage = self.config['max_loading']
+        return src_capacity * max_loading_percentage/100
+
+
+    def aggregate_day_level(self):
+
+        for year in self.ops_data:
+            for month in self.ops_data[year]['months']:
+                for day in self.ops_data[year]['months'][month]['days']:
+                    hours = self.ops_data[year]['months'][month]['days'][day]['hours'].values()
+
+                    # Directly calculate metrics without intermediate steps
+                    self.ops_data[year]['months'][month]['days'][day].update({
+                        'avg_power_output': sum(hour['power_output'] for hour in hours) / 24,
+                        'min_power_output': min(hour['power_output'] for hour in hours),
+                        'max_power_output': max(hour['power_output'] for hour in hours),
+                        'day_energy_output': sum(hour['energy_output'] for hour in hours),
+                        'failure_events': sum(hour['status'] == -1 for hour in hours),
+                        'reduction_events': sum(hour['status'] == 0.5 for hour in hours),
+                        'operation_hours': sum(hour['status'] == 1 for hour in hours),
+                        'downtime': sum(hour['status'] == -2 for hour in hours),
+                    })
+
+    def aggregate_month_level(self):
+
+        for year in self.ops_data:
+            for month in self.ops_data[year]['months']:
+                month_data = self.ops_data[year]['months'][month]['days']
+                
+                # Calculate month-level metrics using list comprehensions
+                self.ops_data[year]['months'][month].update({
+                    'month_failures': sum(day['failure_events'] for day in month_data.values()),
+                    'month_reductions': sum(day['reduction_events'] for day in month_data.values()),
+                    'month_downtime': sum(day['downtime'] for day in month_data.values()),
+                    'month_energy_output': sum(day['day_energy_output'] for day in month_data.values()),
+                    'month_operation_hours': sum(day['operation_hours'] for day in month_data.values()),
+                    'month_fuel_cost': sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['fuel_consumption']['value'] * self.metadata['fuel_cost']['value'],
+                    'month_fixed_opex': self.config['rating'] * self.metadata['opex_baseline_fixed']['value'],
+                    'month_var_opex': sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['opex_baseline_var']['value'],
+                    'month_ppa_cost': (sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['tariff_baseline_var']['value']) + (self.config['rating'] * self.metadata['tariff_baseline_fixed']['value']),
+                })
+                
+                # After calculating the individual components, update 'month_cost_of_operation'
+                month_costs = self.ops_data[year]['months'][month]
+                month_costs['month_cost_of_operation'] = (month_costs['month_fuel_cost'] +
+                                                        month_costs['month_fixed_opex'] +
+                                                        month_costs['month_var_opex'] +
+                                                        month_costs['month_ppa_cost'])
+
+    def aggregate_year_level(self):
+        for year in self.ops_data:
+            year_data = self.ops_data[year]['months']
+
+            depreciation =  self.config['capex']/ self.metadata['useful_life']['value']
+            
+            # Direct assignment of year-level metrics using list comprehensions
+            self.ops_data[year].update({
+                'year_failures': sum(month_data['month_failures'] for month_data in year_data.values()),
+                'year_reductions': sum(month_data['month_reductions'] for month_data in year_data.values()),
+                'year_downtime': sum(month_data['month_downtime'] for month_data in year_data.values()),
+                'year_energy_output': sum(month_data['month_energy_output'] for month_data in year_data.values()),
+                'year_cost_of_operation': sum(month_data['month_cost_of_operation'] for month_data in year_data.values()),
+                'year_fuel_cost': sum(month_data['month_fuel_cost'] for month_data in year_data.values()),
+                'year_fixed_opex': sum(month_data['month_fixed_opex'] for month_data in year_data.values()),
+                'year_var_opex': sum(month_data['month_var_opex'] for month_data in year_data.values()),
+                'year_depreciation': depreciation,
+                'year_ppa_cost': sum(month_data['month_ppa_cost'] for month_data in year_data.values()),
+                'year_operation_hours': sum(month_data['month_operation_hours'] for month_data in year_data.values()),
+            })
 
 class SourceManager:
     def __init__(self, file_path):
         self.file_path = file_path
-        self.sources = {}
+        self.source_types = {}
         try:
             self.read_sources()
         except Exception as e:
@@ -233,36 +330,43 @@ class SourceManager:
             raise
 
     def read_sources(self):
-        df = pd.read_excel(self.file_path, sheet_name='src_ppa')
-        
-        # Read the first set of attribute names and units
-        attributes_1 = df['B'][1:18].tolist()  # Adjust based on actual data range
-        units_1 = df['C'][1:18].tolist()
 
-        # Process sources from the first range (D2 and rightwards)
-        self._process_source_range(df, attributes_1, units_1, start_col=3, name_row=0, data_start_row=1)
+        # Load the DataFrame using Excel's row 2 as headers (header=1 in Pandas)
+        df = pd.read_excel(self.file_path, sheet_name='src', header=1)
 
-        # Read the second set of attribute names and units
-        attributes_2 = df['J'][1:19].tolist()  # Adjust for the new range
-        units_2 = df['K'][1:19].tolist()
+        # Extract attributes and units for the first set of sources (SRC_1 to SRC_5)
+        attributes = df['ATTRIBUTE'].tolist()
+        units = df['UNIT'].tolist()
 
-        # Process sources from the second range (L2 and rightwards)
-        self._process_source_range(df, attributes_2, units_2, start_col=11, name_row=0, data_start_row=1)
+        # Extract attributes and units for the second set of sources (SRC_6), using renamed column headers
+        attributes_captive = df['ATTR_CAPTIVE'].tolist()  # Use dropna() to ignore empty cells
+        units_captive = df['UNIT_CAPTIVE'].tolist()
 
-    def _process_source_range(self, df, attributes, units, start_col, name_row, data_start_row):
-        # Iterate over columns starting from the specified start_col
-        for col_idx, col in enumerate(df.columns[start_col:], start=start_col):
-            # Check if the column header is a non-empty string (indicating a source type)
-            if pd.isnull(df.iloc[name_row, col_idx]):
-                break  # Stop if a blank source type is found
-            name = df.iloc[name_row, col_idx]
-            values = df.iloc[data_start_row:data_start_row+len(attributes), col_idx].tolist()
-            self.sources[name] = Source(name, attributes, units, values)
+        # Source names are in columns D to H for the first 5 sources
+        source_columns = list(df.columns[3:8])  # Adjust if there are more sources
 
-    def get_source_by_name(self, name):
-        return self.sources.get(name)
+        # Initialize Source objects for SRC_1 to SRC_5
+        for source_column in source_columns:
+            values = df[source_column].tolist()
+            self.source_types[source_column] = Source(source_column, attributes, units, values)
+
+        # Column L (index 11) for SRC_6, using the second set of attributes and units
+        values_captive = df[df.columns[11]].tolist()
+        self.source_types[df.columns[11]] = Source(df.columns[11], attributes_captive, units_captive, values_captive)
+
+    def get_source_types_by_name(self, name):
+
+        if name in self.source_types:
+            # Get the template source object
+            template_src = self.source_types[name]
+            new_src = Source(template_src.name, template_src.attributes, template_src.units, template_src.values)
+            return new_src
+        else:
+            return None
     
-    def select_sources(source_manager):
+    #don't think we need this.
+    """
+    def select_source_types(source_manager):
         print("Available sources:")
         for name in source_manager.sources.keys():
             print(name)
@@ -279,13 +383,15 @@ class SourceManager:
             else:
                 print("Source not found.")
         return selected_sources
-
+    """
 def collect_source_config():
-    # Collect configuration data from the user
-    # This is a placeholder; implement according to your application's needs
+
     return {
         'start_year': input("Start Year: "),
         'rating': input("Rating: "),
         'rating_unit': input("Rating Unit: "),
-        'reserve_perc': input("Reserve Percentage: ")
+        'priority': input("Priority: "),
+        'min_loading' : input("Min Loading"),
+        'max_loading' : input("Max Loading"),
+        'spinning_reserve' : input("Spinning Reserve"),
     }

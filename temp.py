@@ -474,3 +474,121 @@ class Scenario:
                 break  # Exit the function if no more power is needed
 
         return power_req, sudden_power_drop  # Return the unmet power requirement, if any
+    
+    #TO DO add try catch here.
+    @classmethod
+    def read_load_solar_data_from_folder(cls,folder_path):
+        for month in range(1, 13):
+            file_name = f'load_{month:02d}.xlsx'
+            file_path = os.path.join(folder_path, file_name)
+
+            cls.load_profile[month] = {}
+            cls.solar_profile[month] = {}
+
+            try:
+                xls = pd.ExcelFile(file_path)
+                days_of_month = [sheet for sheet in xls.sheet_names if sheet.isdigit()]
+
+                for day in days_of_month:
+
+                    cls.load_profile[month][int(day)] = {}
+                    cls.solar_profile[month][int(day)] = {}
+
+                    data = pd.read_excel(xls, sheet_name=day, usecols=['Total Load (KW)','Solar System (MW)'], skiprows=1, nrows=24)
+                    #print(data.columns)
+                    if data.isnull().values.any():
+                        print(f"Warning: Blank values found in {file_name}, sheet {day}")
+                    
+                    cls.load_profile[month][int(day)]['Total Load (KW)'] = data['Total Load (KW)'].tolist()
+                    cls.solar_profile[month][int(day)]['Solar System (MW)'] = data['Solar System (MW)'].tolist()
+
+                print(f"Successfully read {file_name}. Days found: {len(days_of_month)}")
+
+            except FileNotFoundError:
+                print(f"File not found: {file_path}")
+                raise
+            except Exception as e:
+                print(f"Error processing file {file_name}: {e}")
+                raise
+
+def read_sources(self):
+
+        # Adjust to read the whole columns B and C, headers are in row 2 (index 1)
+        df = pd.read_excel(self.file_path, sheet_name='src', header=1, usecols="B:C")
+
+        # Adjust row slices directly in DataFrame, assuming headers are correctly set at row 2
+        attributes_1 = df.iloc[1:20, 0].tolist()  # Adjust slice for 'B' column
+        units_1 = df.iloc[1:20, 1].tolist()       # Adjust slice for 'C' column
+
+        # Assuming additional columns for the second range, read them separately if they're non-contiguous
+        df2 = pd.read_excel(self.file_path, sheet_name='src', header=1, usecols="J:K")
+        attributes_2 = df2.iloc[1:21, 0].tolist()  # Adjust slice for 'J' column
+        units_2 = df2.iloc[1:21, 1].tolist()       # Adjust slice for 'K' column
+
+        # Process sources from the first range, modify _process_source_range to handle lists directly
+        self._process_source_range(df,attributes_1, units_1, start_col=3, name_row=0, data_start_row=1)
+
+        # Process sources from the second range
+        self._process_source_range(df2,attributes_2, units_2, start_col=11, name_row=0, data_start_row=1)        
+    
+    def _process_source_range(self, df, attributes, units, start_col, name_row, data_start_row):
+        # Iterate over columns starting from the specified start_col
+        for col_idx, col in enumerate(df.columns[start_col:], start=start_col):
+            # Check if the column header is a non-empty string (indicating a source type)
+            if pd.isnull(df.iloc[name_row, col_idx]):
+                break  # Stop if a blank source type is found
+            name = df.iloc[name_row, col_idx]
+            values = df.iloc[data_start_row:data_start_row+len(attributes), col_idx].tolist()
+            self.sources[name] = Source(name, attributes, units, values)
+
+def calc_src_power_and_energy(self, y, m, d, h, power_req):
+
+        sudden_power_drop = 0
+        # Sort sources by priority for processing
+        #sorted_sources = sorted(self.src_list, key=lambda x: x.config['priority'])
+        # Group sources by priority
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+            sources = list(group)
+            if not sources:
+                continue  # Skip empty groups
+            
+            # Use spinning reserve requirements from the first source in the group
+            spinning_reserve_req = sources[0].config['spinning_reserve']
+            current_power_output = 0
+            current_power_capacity = 0
+            current_spinning_reserve = 0
+            
+            for src in sources:
+                status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                if status in [-2, -3]:  # Source is not available
+                    continue
+                
+                # Calculate adjusted capacity based on max loading
+                power_capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                max_loading_percentage = src.config['max_loading']
+                adjusted_capacity = power_capacity * max_loading_percentage/100
+                
+                # Include operational sources and simulate output for sources about to fail or reduce output
+                if status in [0, -1, 0.5]:
+                    if status == -1 or status == 0.5:
+                        # Calculate sudden power drop for failing or reducing output sources
+                        sudden_power_drop += adjusted_capacity
+                        # Assume output remains the same for status 0.5 sources
+                        if status == 0.5:
+                            adjusted_capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h-1]['power_output']
+                    
+                    # Calculate contribution proportionally
+                    contribution = min(adjusted_capacity, power_req - current_power_output)
+                    current_power_output += contribution
+                    current_spinning_reserve += power_capacity - contribution  # Update spinning reserve
+                    
+                    # Record contributions
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = contribution
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = contribution  # Assuming same as power_output
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = power_capacity - contribution  # Update spinning reserve
+            
+            # Adjust power requirement based on the total output
+            power_req = max(0,power_req - current_power_output)
+            
+        return power_req, sudden_power_drop
+
