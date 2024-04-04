@@ -1,3 +1,4 @@
+import csv
 import datetime
 import openpyxl
 import pandas as pd
@@ -10,14 +11,21 @@ class Scenario:
     def __init__(self, name, client_name, selected_sources):
         self.name = name
         self.client_name = client_name
+        self.scenario_kpis = {
+            'Average Unit Cost (PKR/kWh)': 0,
+            'Energy Fulfillment Ratio (%)': 0,
+            'Critical Load Interruptions (No.)': 0,
+            'Estimated Interruption Loss (M PKR)': 0
+        }
         self.timestamp = datetime.datetime.now()
         self.src_list = selected_sources
         self.src_list.sort(key=lambda src: src.config['priority'])
-        self.results = {
+        self.hourly_results = {
             y: {
                 m: {
                     d: {
                         h: {
+                            'power_req' : 0,
                             'unserved_power_req': 0,
                             'sudden_power_drop' : 0,
                             'unserved_power_drop' : 0,
@@ -27,7 +35,7 @@ class Scenario:
                         } for d in range(1, 32)
                     } for m in range(1, 13)
                 } for y in range(1, 13)}
-
+        self.yearly_results = []
     
     def has_stable_source(self,year):
 
@@ -62,9 +70,7 @@ class Scenario:
     def calc_src_power_and_energy(self, y, m, d, h, power_req):
 
         sudden_power_drop = 0
-        # Sort sources by priority for processing
-        #sorted_sources = sorted(self.src_list, key=lambda x: x.config['priority'])
-        self.src_list.sort(key=lambda src: src.config['priority'])
+        
         # Group sources by priority
         for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
             sources = list(group)
@@ -153,9 +159,10 @@ class Scenario:
 
                     for h in range (0,24):
 
-                        hourly_results = self.results[y][m][d][h]
+                        hourly_results = self.hourly_results[y][m][d][h]
                         #set the power requirement
                         power_req = Project.load_data[y][m][d][h]
+                        hourly_results['power_req'] = power_req
                         #may also include BESS charging
                         for src in self.src_list:
                             if src.metadata['type']['value'] == 'BESS':
@@ -182,34 +189,11 @@ class Scenario:
                         hourly_results['load_shed'] = load_shed
                         hourly_results['log'] = self.generate_log(y,m,d,h,unserved_power_req, unserved_power_drop,load_shed)
 
-                    #TODO min-off take in stat aggregation.
-                    #if min offtake then a differnt charge applied (min-offtake x tariff, otherwise actual consumption x tariff)
-                #self.calculate_opex(y,m)
+                        # Sort sources by priority for processing
+                        self.src_list.sort(key=lambda src: src.config['priority'])
+        self.aggregate_data_for_reporting()            
 
                         
-    
-    def calculate_opex(self,y,m):
-
-        for src in self.src_list:
-
-            if src.ops_data[y]['source_present'] == 0:
-                continue
-                
-            #we may not need this condition at all.
-            #if src.metadata['finance']['value'] == 'CAPTIVE' and src.metadata['type']['value'] == 'NR':
-            
-                
-                #src.fixed_opex = src.metadata['fixed_opex']['value'] * src.config[rating] * opex inflation rate if metadata exists else 0
-                #src.var_opex = src.ops_data['energy_output'] * src.metadata['var_opex']['value'] * opex inflation if mtadata exists
-                #src.fuel_cost = src.[energy op] * src.metadata[op baseline] * metadata[fuel rate] * fuel inflation rate if metadata exists
-                #calc depreciation if depriciation rate metadata exists else 0
-                #find ppa cost if ppa tariff metadata exists else 0
-                #total cost will be sum of all 
-                return True
-        #after running through the sources, calc number of load failures from results.
-        #use that and the per loss value to determine the loss (this can be in propotion to shortfall with critical load?)
-        #in results, if there unfed demand then that should also be used (in propotion) to calculate further loss.
-    
     def handle_sudden_power_drop(self, y, m, d, h, initial_deficit_power):
 
         deficit_power = initial_deficit_power
@@ -291,7 +275,7 @@ class Scenario:
             # Calculate each source's contribution based on its block load acceptance
             src_contribution = (src.config['rating'] * (block_acceptance / 100)) / src_group_block_acceptance * contribution
             src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] += src_contribution
-            
+            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] += src_contribution
             if src.metadata['type']['value'] == 'BESS':
                 
                 src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = 0
@@ -358,8 +342,164 @@ class Scenario:
         return full_log
 
 
+    def aggregate_data_for_reporting(self):
+
+        for src in self.src_list:
+
+            src.aggregate_day_stats()
+            src.aggregate_month_stats()
+            src.aggregate_year_stats()
+        self.aggregate_yearly_data_for_csv()
+        self.calculate_scenario_kpis()
 
 
+    def calculate_scenario_kpis(self):
+        # Ensure that yearly_data has been populated
+        if not self.yearly_results:
+            print("Yearly data is not available. Please aggregate yearly data first.")
+            return
+
+        avg_unit_cost = sum(year_record['Unit Cost (PKR/kWh)'] for year_record in self.yearly_results) / len(self.yearly_results)
+        avg_enr_fulfill = sum(year_record['Energy Fulfilment Ratio (%)'] for year_record in self.yearly_results) / len(self.yearly_results)
+        critical_load_interr = sum(year_record['Critical Load Interruptions'] for year_record in self.yearly_results)
+        interr_loss = sum(year_record['Estimated Loss due to Interruptions'] for year_record in self.yearly_results)
+
+        # Update the scenario_kpis dictionary with the calculated values
+        self.scenario_kpis = {
+            'Average Unit Cost (PKR/kWh)': avg_unit_cost,
+            'Energy Fulfillment Ratio (%)': avg_enr_fulfill,
+            'Critical Load Interruptions (No.)': critical_load_interr,
+            'Estimated Interruption Loss (M PKR)': interr_loss,
+        }
+
+
+    def aggregate_yearly_data_for_csv(self):
+        
+        self.yearly_results.clear()
+        for y in range(1, 13):
+            total_energy_req = 0
+            unserved_instances = 0
+            critical_load_interruptions = 0
+
+            # Summing total energy requirements
+            for m in range(1, 13):
+                for d in range(1, 32):  # Assuming 31 days for simplicity; adjust as needed
+                    for h in range(24):
+                        hour_data = self.hourly_results[y][m][d][h]
+                        total_energy_req += hour_data['power_req']
+                        if hour_data['unserved_power_req'] > 0.01:
+                            unserved_instances += 1
+                        if hour_data['unserved_power_drop'] > 0.01:
+                            critical_load_interruptions += 1
+
+            # Calculate Energy Fulfilment Ratio (%)
+            total_rows = 365 * 24  # Simplified; adjust for actual days in each month/year
+            energy_fulfilment_ratio = 100 * (1 - (unserved_instances / total_rows))
+
+            # Calculate Estimated Loss due to Interruptions
+            estimated_loss_due_to_interruptions = (critical_load_interruptions * Project.site_data['loss_during_failure'] * 0.5)/1000000
+
+            # Initialize variable for total cost of operation across all sources
+            total_cost_of_operation = 0
+
+            # Aggregate total cost of operation from each source for the year
+            for src in self.src_list:
+                source_year_data = src.ops_data.get(y, {})
+                total_cost_of_operation += source_year_data.get('year_cost_of_operation', 0)
+
+            total_cost_m_pkr = (estimated_loss_due_to_interruptions + total_cost_of_operation) / 1000000 
+
+            # Calculate Unit Cost (PKR/kWh), ensuring no division by zero
+            if total_energy_req > 0:
+                unit_cost_pkr_per_kwh = (total_cost_m_pkr * 1000) / total_energy_req
+            else:
+                unit_cost_pkr_per_kwh = 0  # Avoid division by zero
+
+            year_record = {
+            'year': y,
+            'total_energy_requirement (MWh)': total_energy_req,
+            'Energy Fulfilment Ratio (%)': energy_fulfilment_ratio,
+            'Critical Load Interruptions': critical_load_interruptions,
+            'Estimated Loss due to Interruptions': estimated_loss_due_to_interruptions,
+            'Total Cost (M PKR)': total_cost_m_pkr,
+            'Unit Cost (PKR/kWh)': unit_cost_pkr_per_kwh
+            }
+
+            # Aggregate data for each source
+            source_data = []
+            for src in self.src_list:
+                source_year_data = src.ops_data[y]
+                source_energy_output = source_year_data.get('year_energy_output', 0)
+                source_op_proportion = source_year_data.get('year_operation_hours', 0) / (365 * 24)
+                source_total_cost = source_year_data.get('year_cost_of_operation', 0)
+                source_unit_cost = source_year_data.get('year_unit_cost', 0)
+                source_name = f"{src.config['rating']} {src.config['rating_unit']} {src.metadata['generic_name']['value']}"
+                
+                source_data.append({
+                    f'{source_name} energy output (MWh)': source_energy_output,
+                    f'{source_name} year operating proportion (%)': source_op_proportion * 100,
+                    f'{source_name} total cost of operation (M PKR)': source_total_cost,
+                    f'{source_name} unit cost (PKR/kWh)': source_unit_cost * 1000,
+                })
+            
+            year_record.update({k: v for source_dict in source_data for k, v in source_dict.items()})
+            self.yearly_results.append(year_record)
+        
+    def write_yearly_data_to_csv(self, filepath):
+
+        if self.yearly_results:
+            keys = self.yearly_results[0].keys()
+            with open(filepath, 'w', newline='') as output_file:
+                dict_writer = csv.DictWriter(output_file, keys)
+                dict_writer.writeheader()
+                dict_writer.writerows(self.yearly_results)
+
+    def write_hourly_data_to_csv(self):
+     
+        # Prepare data for DataFrame
+        data = []
+        # Assuming the first source has all the necessary time periods defined
+        first_src_ops_data = self.src_list[0].ops_data
+
+        for y in first_src_ops_data:
+            for m in first_src_ops_data[y]['months']:
+                for d in first_src_ops_data[y]['months'][m]['days']:
+                    for h in first_src_ops_data[y]['months'][m]['days'][d]['hours']:
+                        row = [y, m, d, h]
+                        for src in self.src_list:
+                            ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                            # Append ops_data values for the source
+                            row.extend([
+                                ops_data.get('power_capacity', 0),
+                                ops_data.get('power_output', 0),
+                                ops_data.get('energy_output', 0),
+                                ops_data.get('spin_reserve', 0),
+                                ops_data.get('status', '')
+                            ])
+                        # Append results data for the same time period
+                        result_data = self.hourly_results[y][m][d][h]
+                        row.extend([
+                            result_data.get('power_req', 0),
+                            result_data.get('unserved_power_req', 0),
+                            result_data.get('sudden_power_drop', 0),
+                            result_data.get('unserved_power_drop', 0),
+                            result_data.get('load_shed', 0),
+                            result_data.get('log', 0)
+                        ])
+                        data.append(row)
+
+        # Define column names, including results column names
+        column_names = ['Year', 'Month', 'Day', 'Hour']
+        for i in range(1, len(self.src_list) + 1):
+            column_names.extend([f'Src_{i}_power_capacity', f'Src_{i}_power_output', f'Src_{i}_energy_output', f'Src_{i}_spin_reserve', f'Src_{i}_status'])
+        # Extend column names with results column names
+        column_names.extend(['Power_Req','Unserved_Power_Req', 'Sudden_Power_Drop', 'Unserved_Power_Drop', 'Load_Shed', 'Log'])
+
+        # Create DataFrame
+        df = pd.DataFrame(data, columns=column_names)
+
+        # Write to CSV
+        df.to_csv('data/hourly_data.csv', index=False)
 
 
         

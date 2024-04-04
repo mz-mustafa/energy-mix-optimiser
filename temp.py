@@ -592,3 +592,29 @@ def calc_src_power_and_energy(self, y, m, d, h, power_req):
             
         return power_req, sudden_power_drop
 
+    def read_load_projection(cls, folder_path):
+        input_file_path = os.path.join(folder_path, 'input_data.xlsx')
+        try:
+            # Read 'site_load' worksheet for site_data
+            site_load_df = pd.read_excel(input_file_path, sheet_name='site_load')
+            # Update site_data dictionary
+            for key, value in zip(site_load_df['G'][2:], site_load_df['H'][2:]):
+                cls.site_data[key] = value
+
+            # Read range for load_projection
+            load_projection_df = pd.read_excel(input_file_path, sheet_name='site_load', usecols="C:D", nrows=12, skiprows=3)
+            # Update load_projection dictionary
+            for year in range(1, 13):
+                cls.load_projection[year] = {
+                    'critical_load': load_projection_df.iloc[year-1, 0],
+                    'total': load_projection_df.iloc[year-1, 1]
+                }
+
+            print("Successfully read input_data and updated dictionaries.")
+
+        except FileNotFoundError:
+            print(f"Input data file not found: {input_file_path}")
+            raise
+        except Exception as e:
+            print(f"Error reading input data file: {e}")
+            raise

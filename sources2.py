@@ -56,6 +56,7 @@ class Source:
                 'year_depreciation': 0,
                 'year_ppa_cost': 0,
                 'year_operation_hours': 0,
+                'year_unit_cost' : 0,
                 'months': {}
             }
             year_dict['months'] = self._initialize_months(year, exists)
@@ -71,11 +72,6 @@ class Source:
                 'month_reductions' : 0,
                 'month_downtime': 0,
                 'month_energy_output': 0,
-                'month_cost_of_operation': 0,
-                'month_fuel_cost': 0,
-                'month_fixed_opex': 0,
-                'month_var_opex': 0,
-                'month_ppa_cost': 0,
                 'month_operation_hours': 0,
                 'days': {}
             }
@@ -149,10 +145,27 @@ class Source:
         annual_fails = self.metadata['num_annual_fails']['value']
         if annual_fails <= 0:
             return
+
         for year, year_data in self.ops_data.items():
 
             if year_data.get('source_present') == 0:
                 continue  # Skip non-existent years for this source
+
+            # Introduce variability in failure occurrence
+            fail_chance = random.random()  # Get a random float number between 0.0 to 1.0
+            if annual_fails == 1:
+                if fail_chance <= 1/3:
+                    this_year_fails = 1
+                else:
+                    this_year_fails = 0  # 2/3 chance of no failure
+            else:
+                if fail_chance <= 1/3:
+                    this_year_fails = annual_fails  # Fail as planned
+                elif fail_chance <= 2/3:
+                    this_year_fails = max(1, annual_fails // 2)  # Half the planned failures, at least 1
+                else:
+                    this_year_fails = 0  # No failure
+
             days_of_year = []
             # Generate a flat list of all day-hour combinations
             for month, month_data in year_data['months'].items():
@@ -161,7 +174,7 @@ class Source:
                         days_of_year.append((month, day, hour))
             
             # Randomly select days for failures, ensuring unique days
-            failure_days = random.sample(days_of_year, annual_fails)
+            failure_days = random.sample(days_of_year, this_year_fails)
 
             for month, day, fail_hour in failure_days:
                 # Mark the failure hour
@@ -241,19 +254,21 @@ class Source:
                             # Assuming the Project class and solar_profile structure allows this direct access
                             solar_output = Project.solar_profile[month][day][hour]
                             power_capacity = (solar_output / 5) * self.config['rating']
+                        
+                        elif self.metadata['type']['value'] == 'BESS' and self.metadata['finance']['value'] == 'PPA':
+                            
+                            power_capacity = self.config['rating']
 
                         # Update power_capacity for the hour
                         hour_data['power_capacity'] = power_capacity
 
-    #TODO add degradation here, check if exists in metadata.
     def adjusted_capacity(self,y,m,d,h):
 
         src_capacity = self.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
         max_loading_percentage = self.config['max_loading']
         return src_capacity * max_loading_percentage/100
 
-
-    def aggregate_day_level(self):
+    def aggregate_day_stats(self):
 
         for year in self.ops_data:
             for month in self.ops_data[year]['months']:
@@ -272,52 +287,79 @@ class Source:
                         'downtime': sum(hour['status'] == -2 for hour in hours),
                     })
 
-    def aggregate_month_level(self):
+    def aggregate_month_stats(self):
 
         for year in self.ops_data:
             for month in self.ops_data[year]['months']:
                 month_data = self.ops_data[year]['months'][month]['days']
-                
-                # Calculate month-level metrics using list comprehensions
+
                 self.ops_data[year]['months'][month].update({
                     'month_failures': sum(day['failure_events'] for day in month_data.values()),
                     'month_reductions': sum(day['reduction_events'] for day in month_data.values()),
                     'month_downtime': sum(day['downtime'] for day in month_data.values()),
                     'month_energy_output': sum(day['day_energy_output'] for day in month_data.values()),
                     'month_operation_hours': sum(day['operation_hours'] for day in month_data.values()),
-                    'month_fuel_cost': sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['fuel_consumption']['value'] * self.metadata['fuel_cost']['value'],
-                    'month_fixed_opex': self.config['rating'] * self.metadata['opex_baseline_fixed']['value'],
-                    'month_var_opex': sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['opex_baseline_var']['value'],
-                    'month_ppa_cost': (sum(day['day_energy_output'] for day in month_data.values()) * self.metadata['tariff_baseline_var']['value']) + (self.config['rating'] * self.metadata['tariff_baseline_fixed']['value']),
                 })
-                
-                # After calculating the individual components, update 'month_cost_of_operation'
-                month_costs = self.ops_data[year]['months'][month]
-                month_costs['month_cost_of_operation'] = (month_costs['month_fuel_cost'] +
-                                                        month_costs['month_fixed_opex'] +
-                                                        month_costs['month_var_opex'] +
-                                                        month_costs['month_ppa_cost'])
 
-    def aggregate_year_level(self):
+    def aggregate_year_stats(self):
+
         for year in self.ops_data:
             year_data = self.ops_data[year]['months']
 
-            depreciation =  self.config['capex']/ self.metadata['useful_life']['value']
-            
-            # Direct assignment of year-level metrics using list comprehensions
+            total_energy_output = sum(month_data['month_energy_output'] for month_data in year_data.values())
+            finance_type = self.metadata['finance']['value']
+            inflation_rate = self.metadata.get('inflation_rate', {'value': 0})['value']
+            min_offtake = self.config['rating'] * self.metadata.get('min_annual_offtake', {'value': 0})['value']
+
+            # Calculate costs with base values
+            fuel_cost_base = 0
+            if finance_type == "CAPTIVE":
+                fuel_cost_base = total_energy_output * self.metadata['fuel_consumption']['value'] * self.metadata['fuel_cost']['value']
+            elif finance_type == "PPA":
+                fuel_cost_base = total_energy_output * self.metadata['fuel_cost']['value']
+
+            ppa_cost_base = 0
+            if finance_type == "PPA":
+                fixed_component = self.config['rating'] * self.metadata['tariff_baseline_fixed']['value']
+                variable_component = max(min_offtake, total_energy_output) * self.metadata['tariff_baseline_var']['value']
+                ppa_cost_base = fixed_component + variable_component
+
+            fixed_opex_base = 0
+            var_opex_base = 0
+            if finance_type == "CAPTIVE":
+                fixed_opex_base = self.config['rating'] * self.metadata['opex_baseline_fixed']['value']
+                var_opex_base = total_energy_output * self.metadata['opex_baseline_var']['value']
+
+            # Apply inflation to calculated costs except depreciation
+            fuel_cost = fuel_cost_base * (1 + inflation_rate)**(year-1)
+            ppa_cost = ppa_cost_base * (1 + inflation_rate)**(year-1)
+            fixed_opex = fixed_opex_base * (1 + inflation_rate)**(year-1)
+            var_opex = var_opex_base * (1 + inflation_rate)**(year-1)
+
+            # Depreciation is calculated separately for CAPTIVE sources, not affected by inflation
+            depreciation = 0
+            if finance_type == "CAPTIVE":
+                depreciation = self.config['rating'] * self.metadata['capital_cost_baseline']['value'] / self.metadata['useful_life']['value']
+
+            # Sum of all costs for the year
+            year_cost_of_operation = fuel_cost + fixed_opex + var_opex + ppa_cost + depreciation
+            year_unit_cost = year_cost_of_operation / (total_energy_output * 1000) if total_energy_output > 0 else 0
+
             self.ops_data[year].update({
                 'year_failures': sum(month_data['month_failures'] for month_data in year_data.values()),
                 'year_reductions': sum(month_data['month_reductions'] for month_data in year_data.values()),
                 'year_downtime': sum(month_data['month_downtime'] for month_data in year_data.values()),
-                'year_energy_output': sum(month_data['month_energy_output'] for month_data in year_data.values()),
-                'year_cost_of_operation': sum(month_data['month_cost_of_operation'] for month_data in year_data.values()),
-                'year_fuel_cost': sum(month_data['month_fuel_cost'] for month_data in year_data.values()),
-                'year_fixed_opex': sum(month_data['month_fixed_opex'] for month_data in year_data.values()),
-                'year_var_opex': sum(month_data['month_var_opex'] for month_data in year_data.values()),
+                'year_energy_output': total_energy_output,
+                'year_cost_of_operation': year_cost_of_operation,
+                'year_fuel_cost': fuel_cost,
+                'year_fixed_opex': fixed_opex,
+                'year_var_opex': var_opex,
                 'year_depreciation': depreciation,
-                'year_ppa_cost': sum(month_data['month_ppa_cost'] for month_data in year_data.values()),
+                'year_ppa_cost': ppa_cost,
                 'year_operation_hours': sum(month_data['month_operation_hours'] for month_data in year_data.values()),
+                'year_unit_cost': year_unit_cost,
             })
+
 
 class SourceManager:
     def __init__(self, file_path):
