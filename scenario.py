@@ -87,6 +87,53 @@ class Scenario:
                     year = y+1 if y < 12 else 12
         return year, month, day, hour
 
+    def calc_src_power_and_energy2(self, y, m, d, h, power_req):
+
+        rem_power_req = power_req
+        spin_reserve_req = power_req * self.spinning_reserve_perc/100
+        group_data = []
+
+        #Create groups and store in capacities in group_data
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+
+            sources = list(group)
+            if not sources:
+                continue
+            
+            group_cap = 0
+            min_cap = 0
+            group_mandatory_spin_reserve = 0
+            for src in sources:
+                src_hourly_ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                
+                if src_hourly_ops_data['status'] in [-2, -3]:  # Source is not available
+                    continue
+                group_cap += src.adjusted_capacity(y,m,d,h)
+                min_cap += src_hourly_ops_data['power_capacity'] * src.config['min_loading']/ 100
+                group_mandatory_spin_reserve += src.config['spinning_reserve'] * src_hourly_ops_data['power_capacity']
+
+            group_data.append({'group_type': sources[0].metadata['type']['value'],
+                               'priority': priority, 
+                               'capacity': group_cap, 
+                               'min_cap':min_cap, 
+                               'forced_spin_reserve': group_mandatory_spin_reserve, 
+                               'actual_output': 0})
+        
+        #first take min pwr from sources that have to run
+        for group in group_data:
+
+            group['actual_output'] += min(group['min_cap'], rem_power_req)
+            rem_power_req = max(0,rem_power_req - group['min_cap'])
+            group['capacity'] -= group['actual_output']
+        
+        #then take power by group priority
+        #need to respect spin reserve here
+        for group in group_data:
+            group['actual_output'] += min(group['capacity',rem_power_req,])
+
+
+        return True
+
     def calc_src_power_and_energy(self, y, m, d, h, power_req):
 
         sudden_power_drop = 0
@@ -241,9 +288,16 @@ class Scenario:
 
             #then we need to run through each source (starting from least P)
             #and subtract it equally from each group.
-            
+            self.src_list.sort(key=lambda src: src.config['priority'],reversed = True)
+            for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
 
-        return True
+                sources = list(group)
+                total_group_output = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] for src in sources)
+
+                #check if the excess power is greater than the group's output. If it is then the group needs to run at min loading.
+                group_adjusted_output = max(total_group_output - excess_power, total_group_output *)
+
+            return True
 
     def simulate(self):
 
