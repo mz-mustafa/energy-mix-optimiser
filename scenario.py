@@ -91,6 +91,7 @@ class Scenario:
 
         rem_power_req = power_req
         spin_reserve_req = power_req * self.spinning_reserve_perc/100
+        rem_spin_reserve_req = spin_reserve_req
         group_data = []
 
         #Create groups and store in capacities in group_data
@@ -121,15 +122,44 @@ class Scenario:
         
         #first take min pwr from sources that have to run
         for group in group_data:
+            
+            if group['forced_spin_reserve'] > 0:
 
-            group['actual_output'] += min(group['min_cap'], rem_power_req)
-            rem_power_req = max(0,rem_power_req - group['min_cap'])
-            group['capacity'] -= group['actual_output']
+                group['actual_output'] += min(group['min_cap'], rem_power_req)
+                rem_power_req = max(0,rem_power_req - group['actual_output'])
+                group['capacity'] -= group['actual_output']
         
         #then take power by group priority
         #need to respect spin reserve here
         for group in group_data:
-            group['actual_output'] += min(group['capacity',rem_power_req,])
+            group['actual_output'] += min(group['capacity'],rem_power_req)
+            rem_power_req = max(0,rem_power_req - group['actual_output'])
+            group['capacity'] -= group['actual_output']
+            rem_spin_reserve_req -= group['actual_output']
+            if rem_power_req == 0 and rem_spin_reserve_req == 0:
+                break
+        
+        #now we have the target for each source group
+        rem_power_req = power_req
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+            
+            sources = list(group)
+            if not sources:
+                continue
+            selected_group = next((d for d in group_data if d['priority'] == sources[0].config['priority']), None)
+
+            if selected_group['actual_output'] > 0:
+                power_from_group = selected_group['actual_output']
+                loading_factor = power_from_group/ selected_group['capacity']
+                loading_factor = 1 if loading_factor > 1 else loading_factor
+                for src in sources:
+                    
+                    src_hourly_ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                    if src_hourly_ops_data['status'] in [-2,-3]:
+                        continue
+                    
+                    src_hourly_ops_data['status'] = 1
+                    src_hourly_ops_data['status'] =
 
 
         return True
