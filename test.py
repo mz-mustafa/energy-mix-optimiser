@@ -28,40 +28,42 @@ def set_baseline_src_config():
     #9 x 1.5MW Captive Gas Generators (SRC_6)
     sources = []
     
-    #5MW solar plant (SRC_4)
+    #==========================================
+    #5MW existing solar plant SRC_4
+
     src = source_manager.get_source_types_by_name('SRC_4')
     src.configure(start_year=1, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
                   priority=1, min_loading=0, max_loading=100)
     sources.append(src)
 
-    #5MW solar plant (SRC_4)
+
     src = source_manager.get_source_types_by_name('SRC_4')
     src.configure(start_year=1, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
                   priority=1, min_loading=0, max_loading=100)
     sources.append(src)
-    """
-    #10MW solar plant (SRC_1)
-    src = source_manager.get_source_types_by_name('SRC_1')
-    src.configure(start_year=2, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-    
-    src = source_manager.get_source_types_by_name('SRC_1')
-    src.configure(start_year=2, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-    
-    src = source_manager.get_source_types_by_name('SRC_1')
-    src.configure(start_year=2, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
 
-    src = source_manager.get_source_types_by_name('SRC_1')
-    src.configure(start_year=2, end_year = 12,rating=2.5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
+    
+    #==========================================
+    
     """
-    #1.5MW captive generators
+    #5MW new solar plant
+    
+    solar_src_list = []
+    for i in range(1,3):
+        
+        solar_src =  source_manager.get_source_types_by_name('SRC_1')
+        solar_src.configure(start_year=2, end_year = 12, rating=2.5, rating_unit='MW', spin_reserve=0, 
+                  priority=2, min_loading=0, max_loading=100)
+        solar_src_list.append(solar_src)
+    
+    sources.extend(solar_src_list)
+    """
+    
+    
+    #==========================================
+    """
+   
+    #1.5MW captive generators SRC_6
     captive_src_list = []
  
     for i in range(1,5):
@@ -72,50 +74,43 @@ def set_baseline_src_config():
         captive_src_list.append(captive_src)
     
     sources.extend(captive_src_list)
-
-       #1.5MW captive generators
-    captive_src_list = []
-
     """
-    #2.5MW captive HFOgenerators
+
+    #==========================================
+        
+    #PPA HFO generators SRC_2
     hfo_src_list = []
     for i in range(1,4):
         
         hfo_src =  source_manager.get_source_types_by_name('SRC_2')
-        hfo_src.configure(start_year=2, end_year = 12, rating=3, rating_unit='MW', spin_reserve=20, 
-                  priority=3, min_loading=0, max_loading=100)
+        hfo_src.configure(start_year=1, end_year = 12, rating=4, rating_unit='MW', spin_reserve=100, 
+                  priority=3, min_loading=10, max_loading=100)
         hfo_src_list.append(hfo_src)
     
     sources.extend(hfo_src_list)
-    
-    hfo_src_list = []
-    for i in range(1,5):
-        
-        hfo_src =  source_manager.get_source_types_by_name('SRC_2')
-        hfo_src.configure(start_year=8, end_year = 12, rating=3, rating_unit='MW', spin_reserve=20, 
-                  priority=3, min_loading=0, max_loading=100)
-        hfo_src_list.append(hfo_src)
-    
-    sources.extend(hfo_src_list)
-    """
 
+        
+    #==========================================
+    """
     
     #10MW steam (SRC_5)
     src = source_manager.get_source_types_by_name('SRC_5')
     src.configure(start_year=3, end_year = 12,rating=10, rating_unit='MW', spin_reserve=20, 
                   priority=0, min_loading=0, max_loading=60)
     sources.append(src)
-    
     """
-    #12 x 0.5MW BESS (SRC_3)
+    
+    #==========================================
+    #6 x 0.5MW BESS (SRC_3)
     bess_src_list = []
     for i in range(1,7):
         bess_src = source_manager.get_source_types_by_name('SRC_3')
-        bess_src.configure(start_year=2, end_year = 12, rating = 0.5, 
+        bess_src.configure(start_year=1, end_year = 12, rating = 0.5, 
                            rating_unit='MWh', spin_reserve=0, priority=4, min_loading=0, max_loading=100)
         bess_src_list.append(bess_src)
     sources.extend(bess_src_list)
-    """
+
+
     return sources
 
 def simulate_scenario(scenario):
@@ -133,7 +128,8 @@ if __name__ == "__main__":
         output_filepath = 'data/summary_output.csv'
         src_list = set_baseline_src_config()
         print('sources created and configured')
-        sc = Scenario(name = "Baseline", client_name = "Engro",selected_sources=src_list)
+        #BESS non-Em mode: 0 means none, 1 means yes with equal distribution, 2 means yes with selection utilization
+        sc = Scenario(name = "Baseline", client_name = "Engro",selected_sources=src_list,spin_reserve_perc=25,bess_non_emergency_use=2)
         print('scenario created, strting simulation')
         
         sc.simulate()

@@ -28,6 +28,7 @@ class Source:
         self.config['capex'] = rating * self.metadata.get('capital_cost_baseline', {'value': 0})['value'] * (1 + Project.inflation_rate)**(start_year-1)
         self.ops_data = self._initialize_years()
         self.update_power_capacity()
+        self.initialize_bess()
         self.seed_failures()
         self.seed_solar_reductions()
         self.aggregate_failure_reduction_stats()
@@ -101,11 +102,12 @@ class Source:
         status = 0 if exists else -3
         for hour in range(24):
             hours_data[hour] = {
-                'power_capacity': 0,
+                'capacity': 0,
                 'power_output': 0,
                 'energy_output': 0,
-                'spin_reserve' : 0,
-                'status': status
+                'reserve' : 0,
+                'status': status,
+                'mandatory_reserve' : 0
             }
         return hours_data
 
@@ -131,7 +133,7 @@ class Source:
                     for hour in range(1,24):
                         
                         # Check for a negative power output delta between h and h-1
-                        if hour > 0 and day_data['hours'][hour]['power_capacity'] < day_data['hours'][hour - 1]['power_capacity']:
+                        if hour > 0 and day_data['hours'][hour]['capacity'] < day_data['hours'][hour - 1]['capacity']:
                             candidate_hours.append(hour)
                     
                     # Randomly select hours to flag, up to the daily limit
@@ -239,7 +241,7 @@ class Source:
                         power_capacity = 0
 
                         if self.metadata['type']['value'] == 'NR' and self.metadata['finance']['value'] == 'PPA':
-                            power_capacity = self.config['rating']
+                            power_capacity = self.config['rating'] * self.config['max_loading']/100
 
                         elif self.metadata['type']['value'] == 'NR' and self.metadata['finance']['value'] == 'CAPTIVE':
                             # Check for 'annual_degradation' key in metadata
@@ -247,26 +249,35 @@ class Source:
                                 annual_degradation_rate = self.metadata['annual_degradation']['value']
                                 # Apply annual degradation
                                 degraded_rating = self.config['rating'] * ((1 - (annual_degradation_rate/100)) ** years_of_operation)
-                                power_capacity = degraded_rating
+                                power_capacity = degraded_rating * self.config['max_loading']/100
 
                         elif self.metadata['type']['value'] == 'R':
                             # Use solar profile for renewable sources
                             # Assuming the Project class and solar_profile structure allows this direct access
                             solar_output = Project.solar_profile[month][day][hour]
-                            power_capacity = (solar_output / 5) * self.config['rating']
+                            power_capacity = (solar_output / 5) * self.config['rating'] * self.config['max_loading']/100
                         
                         elif self.metadata['type']['value'] == 'BESS' and self.metadata['finance']['value'] == 'PPA':
                             
-                            power_capacity = self.config['rating']
+                            power_capacity = self.config['rating'] * self.config['max_loading']/100
 
                         # Update power_capacity for the hour
-                        hour_data['power_capacity'] = power_capacity
+                        hour_data['capacity'] = power_capacity
+    
+    
+    def initialize_bess(self):
 
+        if self.metadata['type']['value'] == 'BESS':
+            #capacity is set through the set capacity function.
+            self.ops_data[1]['months'][1]['days'][1]['hours'][0]['reserve'] = self.config['rating'] * self.config['max_loading']/100
+    
+    """
     def adjusted_capacity(self,y,m,d,h):
 
-        src_capacity = self.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+        src_capacity = self.ops_data[y]['months'][m]['days'][d]['hours'][h]['capacity']
         max_loading_percentage = self.config['max_loading']
         return src_capacity * max_loading_percentage/100
+    """
 
     def aggregate_day_stats(self):
 
