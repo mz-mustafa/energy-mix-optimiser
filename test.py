@@ -61,34 +61,34 @@ def set_baseline_src_config():
     
     
     #==========================================
-    """
-   
+    
+    
     #1.5MW captive generators SRC_6
     captive_src_list = []
  
-    for i in range(1,5):
+    for i in range(1,3):
         
         captive_src =  source_manager.get_source_types_by_name('SRC_6')
-        captive_src.configure(start_year=1, end_year = 12, rating=1.5, rating_unit='MW', spin_reserve=10, 
-                  priority=2, min_loading=0, max_loading=100)
+        captive_src.configure(start_year=1, end_year = 12, rating=1.5, rating_unit='MW', spin_reserve=0, 
+                  priority=3, min_loading=0, max_loading=100)
         captive_src_list.append(captive_src)
     
     sources.extend(captive_src_list)
-    """
+    
 
     #==========================================
-        
+    
     #PPA HFO generators SRC_2
     hfo_src_list = []
     for i in range(1,4):
         
         hfo_src =  source_manager.get_source_types_by_name('SRC_2')
-        hfo_src.configure(start_year=1, end_year = 12, rating=4, rating_unit='MW', spin_reserve=100, 
-                  priority=3, min_loading=10, max_loading=100)
+        hfo_src.configure(start_year=1, end_year = 12, rating=3, rating_unit='MW', spin_reserve=100, 
+                  priority=2, min_loading=10, max_loading=100)
         hfo_src_list.append(hfo_src)
     
     sources.extend(hfo_src_list)
-
+    
         
     #==========================================
     """
@@ -101,15 +101,17 @@ def set_baseline_src_config():
     """
     
     #==========================================
+
+    """
     #6 x 0.5MW BESS (SRC_3)
     bess_src_list = []
-    for i in range(1,7):
+    for i in range(1,3):
         bess_src = source_manager.get_source_types_by_name('SRC_3')
         bess_src.configure(start_year=1, end_year = 12, rating = 0.5, 
                            rating_unit='MWh', spin_reserve=0, priority=4, min_loading=0, max_loading=100)
         bess_src_list.append(bess_src)
     sources.extend(bess_src_list)
-
+    """
 
     return sources
 

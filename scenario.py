@@ -248,7 +248,7 @@ class Scenario:
 
                     group_actual_output += src_hourly_ops_data['power_output']
                 rem_power_req = max(0, rem_power_req - group_actual_output)
-                if rem_power_req < 0.001:
+                if rem_power_req < 0.01:
                     rem_power_req = 0
                     break
             if rem_power_req == 0:
@@ -295,15 +295,18 @@ class Scenario:
                         src_hourly_data['reserve'] -= src_hourly_data['power_output']
                         src_hourly_data['status'] = 1
                         rem_power_req = max(0,rem_power_req - src_hourly_data['power_output'])
-                        if rem_power_req < 0.001:
+                        if rem_power_req < 0.01:
                             rem_power_req = 0
                             break
+            if rem_power_req < 0.01:
+                rem_power_req = 0
         return rem_power_req
     
     def simulate(self):
 
         for y in range(1,13):
 
+            print(f'Simulating Year {y}')
             for m in range (1,13):
 
                 if m == 2:  # February
@@ -369,7 +372,7 @@ class Scenario:
             src_hourly_ops_data['power_output'] += contribution
             src_hourly_ops_data['energy_output'] += contribution
             src_hourly_ops_data['reserve'] -= contribution
-            if remaining_demand < 0.001:
+            if remaining_demand < 0.01:
                 remaining_demand = 0
                 break
 
@@ -544,7 +547,7 @@ class Scenario:
 
             deficit = max(0,deficit - src_contribution)
 
-            if deficit <= 0.001:
+            if deficit <= 0.01:
                 deficit = 0
                 break
         return deficit
@@ -560,7 +563,7 @@ class Scenario:
 
         if unserved_power_req > 0:
 
-            full_explanation = f"Total power requirements could not be satisfied. Shortfall = {unserved_power_req} MW"
+            full_explanation = f"Total power requirements could not be satisfied. Shortfall = {round(unserved_power_req,3)} MW"
             return full_explanation
     
         if failed_sources:
@@ -602,13 +605,14 @@ class Scenario:
         avg_enr_fulfill = sum(year_record['Energy Fulfilment Ratio (%)'] for year_record in self.yearly_results) / len(self.yearly_results)
         critical_load_interr = sum(year_record['Critical Load Interruptions'] for year_record in self.yearly_results)
         interr_loss = sum(year_record['Estimated Loss due to Interruptions'] for year_record in self.yearly_results)
-
+        load_shed_events = sum(year_record['Non-critical Load shedding events'] for year_record in self.yearly_results)
         # Update the scenario_kpis dictionary with the calculated values
         self.scenario_kpis = {
             'Average Unit Cost (PKR/kWh)': avg_unit_cost,
             'Energy Fulfillment Ratio (%)': avg_enr_fulfill,
             'Critical Load Interruptions (No.)': critical_load_interr,
             'Estimated Interruption Loss (M PKR)': interr_loss,
+            'Non-critical Load shedding events': load_shed_events,
         }
 
 
@@ -619,24 +623,34 @@ class Scenario:
             total_energy_req = 0
             unserved_instances = 0
             critical_load_interruptions = 0
+            load_shed_events = 0
 
             # Summing total energy requirements
             for m in range(1, 13):
-                for d in range(1, 32):  # Assuming 31 days for simplicity; adjust as needed
+                if m == 2:  # February
+                    days = 28
+                elif m in [4, 6, 9, 11]:  # April, June, September, November
+                    days = 30
+                else:  # All other months
+                    days = 31
+
+                for d in range(1, days+1):  # Assuming 31 days for simplicity; adjust as needed
                     for h in range(24):
                         hour_data = self.hourly_results[y][m][d][h]
                         total_energy_req += hour_data['power_req']
                         if hour_data['unserved_power_req'] > 0.01:
                             unserved_instances += 1
+                            critical_load_interruptions += 1
                         if hour_data['unserved_power_drop'] > 0.01:
                             critical_load_interruptions += 1
-
+                        if hour_data['load_shed'] > 0:
+                            load_shed_events +=1
             # Calculate Energy Fulfilment Ratio (%)
             total_rows = 365 * 24  # Simplified; adjust for actual days in each month/year
             energy_fulfilment_ratio = 100 * (1 - (unserved_instances / total_rows))
 
             # Calculate Estimated Loss due to Interruptions
-            estimated_loss_due_to_interruptions = (critical_load_interruptions * Project.site_data['loss_during_failure'] * 0.5)/1000000
+            estimated_loss_due_to_interruptions = (critical_load_interruptions * Project.site_data['loss_during_failure'])/1000000
 
             # Initialize variable for total cost of operation across all sources
             total_cost_of_operation = 0
@@ -646,7 +660,7 @@ class Scenario:
                 source_year_data = src.ops_data.get(y, {})
                 total_cost_of_operation += source_year_data.get('year_cost_of_operation', 0)
 
-            total_cost_m_pkr = (estimated_loss_due_to_interruptions + total_cost_of_operation) / 1000000 
+            total_cost_m_pkr = estimated_loss_due_to_interruptions + total_cost_of_operation 
 
             # Calculate Unit Cost (PKR/kWh), ensuring no division by zero
             if total_energy_req > 0:
@@ -656,29 +670,30 @@ class Scenario:
 
             year_record = {
             'year': y,
-            'total_energy_requirement (MWh)': total_energy_req,
-            'Energy Fulfilment Ratio (%)': energy_fulfilment_ratio,
-            'Critical Load Interruptions': critical_load_interruptions,
-            'Estimated Loss due to Interruptions': estimated_loss_due_to_interruptions,
-            'Total Cost (M PKR)': total_cost_m_pkr,
-            'Unit Cost (PKR/kWh)': unit_cost_pkr_per_kwh
+            'total_energy_requirement (MWh)': round(total_energy_req,2),
+            'Energy Fulfilment Ratio (%)': round(energy_fulfilment_ratio,2),
+            'Critical Load Interruptions': round(critical_load_interruptions,2),
+            'Estimated Loss due to Interruptions': round(estimated_loss_due_to_interruptions,2),
+            'Non-critical Load shedding events': load_shed_events,
+            'Total Cost (M PKR)': round(total_cost_m_pkr,2),
+            'Unit Cost (PKR/kWh)': round(unit_cost_pkr_per_kwh,2)
             }
 
             # Aggregate data for each source
             source_data = []
-            for src in self.src_list:
-                source_year_data = src.ops_data[y]
+            for index, src in enumerate(self.src_list, start=1):
+                source_year_data = src.ops_data.get(y, {})
                 source_energy_output = source_year_data.get('year_energy_output', 0)
                 source_op_proportion = source_year_data.get('year_operation_hours', 0) / (365 * 24)
                 source_total_cost = source_year_data.get('year_cost_of_operation', 0)
                 source_unit_cost = source_year_data.get('year_unit_cost', 0)
-                source_name = f"{src.config['rating']} {src.config['rating_unit']} {src.metadata['generic_name']['value']}"
+                source_name = f"SRC-{index} {src.metadata['generic_name']['value']}"
                 
                 source_data.append({
-                    f'{source_name} energy output (MWh)': source_energy_output,
-                    f'{source_name} year operating proportion (%)': source_op_proportion * 100,
-                    f'{source_name} total cost of operation (M PKR)': source_total_cost,
-                    f'{source_name} unit cost (PKR/kWh)': source_unit_cost * 1000,
+                    f'{source_name} energy output (MWh)': round(source_energy_output,2),
+                    f'{source_name} year operating proportion (%)': round(source_op_proportion * 100,2),
+                    f'{source_name} total cost of operation (M PKR)': round(source_total_cost,2),
+                    f'{source_name} unit cost (PKR/kWh)': round(source_unit_cost,2),
                 })
             
             year_record.update({k: v for source_dict in source_data for k, v in source_dict.items()})
@@ -709,20 +724,20 @@ class Scenario:
                             ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
                             # Append ops_data values for the source
                             row.extend([
-                                ops_data.get('capacity', 0),
-                                ops_data.get('power_output', 0),
-                                ops_data.get('energy_output', 0),
-                                ops_data.get('reserve', 0),
+                                round(ops_data.get('capacity', 0),2),
+                                round(ops_data.get('power_output', 0),2),
+                                round(ops_data.get('energy_output', 0),2),
+                                round(ops_data.get('reserve', 0),2),
                                 ops_data.get('status', '')
                             ])
                         # Append results data for the same time period
                         result_data = self.hourly_results[y][m][d][h]
                         row.extend([
-                            result_data.get('power_req', 0),
-                            result_data.get('unserved_power_req', 0),
-                            result_data.get('sudden_power_drop', 0),
-                            result_data.get('unserved_power_drop', 0),
-                            result_data.get('load_shed', 0),
+                            round(result_data.get('power_req', 0),2),
+                            round(result_data.get('unserved_power_req', 0),2),
+                            round(result_data.get('sudden_power_drop', 0),2),
+                            round(result_data.get('unserved_power_drop', 0),2),
+                            round(result_data.get('load_shed', 0),3),
                             result_data.get('log', 0)
                         ])
                         data.append(row)

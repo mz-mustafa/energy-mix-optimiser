@@ -320,8 +320,9 @@ class Source:
             total_energy_output = sum(month_data['month_energy_output'] for month_data in year_data.values())
             finance_type = self.metadata['finance']['value']
             inflation_rate = self.metadata.get('inflation_rate', {'value': 0})['value']
-            min_offtake = self.config['rating'] * self.metadata.get('min_annual_offtake', {'value': 0})['value']
-
+            if self.ops_data[year]['source_present'] == 1:
+                min_offtake = self.config['rating'] * self.metadata.get('min_annual_off_take', {'value': 0})['value']
+            else: min_offtake = 0
             # Calculate costs with base values
             fuel_cost_base = 0
             if finance_type == "CAPTIVE":
@@ -361,14 +362,14 @@ class Source:
                 'year_reductions': sum(month_data['month_reductions'] for month_data in year_data.values()),
                 'year_downtime': sum(month_data['month_downtime'] for month_data in year_data.values()),
                 'year_energy_output': total_energy_output,
-                'year_cost_of_operation': year_cost_of_operation,
-                'year_fuel_cost': fuel_cost,
-                'year_fixed_opex': fixed_opex,
-                'year_var_opex': var_opex,
-                'year_depreciation': depreciation,
-                'year_ppa_cost': ppa_cost,
+                'year_cost_of_operation': round(year_cost_of_operation/1000000,2),
+                'year_fuel_cost': round(fuel_cost,2),
+                'year_fixed_opex': round(fixed_opex,2),
+                'year_var_opex': round(var_opex,2),
+                'year_depreciation': round(depreciation  / 1000000,2),
+                'year_ppa_cost': round(ppa_cost / 1000000,2),
                 'year_operation_hours': sum(month_data['month_operation_hours'] for month_data in year_data.values()),
-                'year_unit_cost': year_unit_cost,
+                'year_unit_cost': round(year_unit_cost,2),
             })
 
 
