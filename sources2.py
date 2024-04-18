@@ -330,17 +330,22 @@ class Source:
             elif finance_type == "PPA":
                 fuel_cost_base = total_energy_output * self.metadata['fuel_cost']['value']
 
+            variable_component = 0
+            fixed_component = 0
             ppa_cost_base = 0
             if finance_type == "PPA":
-                fixed_component = self.config['rating'] * self.metadata['tariff_baseline_fixed']['value']
-                variable_component = max(min_offtake, total_energy_output) * self.metadata['tariff_baseline_var']['value']
-                ppa_cost_base = fixed_component + variable_component
-
+                if self.ops_data[year]['source_present'] == 1:
+                    fixed_component = self.config['rating'] * self.metadata['tariff_baseline_fixed']['value']
+                    variable_component = max(min_offtake, total_energy_output) * self.metadata['tariff_baseline_var']['value']
+                    ppa_cost_base = fixed_component + variable_component
+            
             fixed_opex_base = 0
             var_opex_base = 0
             if finance_type == "CAPTIVE":
-                fixed_opex_base = self.config['rating'] * self.metadata['opex_baseline_fixed']['value']
-                var_opex_base = total_energy_output * self.metadata['opex_baseline_var']['value']
+                if self.ops_data[year]['source_present'] == 1:
+                    fixed_opex_base = self.config['rating'] * self.metadata['opex_baseline_fixed']['value']
+                    var_opex_base = total_energy_output * self.metadata['opex_baseline_var']['value']
+
 
             # Apply inflation to calculated costs except depreciation
             fuel_cost = fuel_cost_base * (1 + inflation_rate)**(year-1)
@@ -351,7 +356,8 @@ class Source:
             # Depreciation is calculated separately for CAPTIVE sources, not affected by inflation
             depreciation = 0
             if finance_type == "CAPTIVE":
-                depreciation = self.config['rating'] * self.metadata['capital_cost_baseline']['value'] / self.metadata['useful_life']['value']
+                if self.ops_data[year]['source_present'] == 1:
+                    depreciation = self.config['rating'] * self.metadata['capital_cost_baseline']['value'] / self.metadata['useful_life']['value']
 
             # Sum of all costs for the year
             year_cost_of_operation = fuel_cost + fixed_opex + var_opex + ppa_cost + depreciation

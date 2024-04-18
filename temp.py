@@ -618,3 +618,287 @@ def calc_src_power_and_energy(self, y, m, d, h, power_req):
         except Exception as e:
             print(f"Error reading input data file: {e}")
             raise
+
+def calc_src_power_and_energy(self, y, m, d, h, power_req):
+
+        sudden_power_drop = 0
+        
+        # Group sources by priority
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+            sources = list(group)
+            if not sources or sources[0].metadata['type']['value'] == 'BESS':
+                continue  # Skip empty groups
+            
+            # Use spinning reserve requirements from the first source in the group
+            spin_reserve_req = sources[0].config['spinning_reserve']
+            current_power_output = 0
+            current_group_capacity = 0
+            current_spinning_reserve = 0
+            
+            for src in sources:
+                status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                if status in [-2, -3]:  # Source is not available
+                    continue
+                
+                # Calculate adjusted capacity based on max loading for current source in group
+                src_capacity = src.adjusted_capacity(y,m,d,h)
+                if src_capacity == 0:
+                    continue
+                current_group_capacity += src_capacity
+                if status == 0:
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] = 1
+                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = -0.001
+                if current_group_capacity >= power_req:
+
+                    if  current_group_capacity - power_req >= spin_reserve_req * current_group_capacity/100:
+
+                        break
+            if current_group_capacity > 0:
+                loading_factor = power_req / current_group_capacity if current_group_capacity > 0 else 0
+                if loading_factor > 1:
+                    loading_factor = 1
+                grp_actual_output = 0
+                for src in sources:
+
+                    status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                    
+                    if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] == -0.001:
+
+                        src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = 0
+                        src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = loading_factor * src.adjusted_capacity(y,m,d,h)
+                        
+                        if status == 1:
+        
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = src.adjusted_capacity(y,m,d,h) - src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                        
+                        #if utilized and failed
+                        if status == -1:
+                                    
+                            sudden_power_drop += src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = 0
+
+                        if status == 0.5:
+
+                            sudden_power_drop += src.ops_data[y]['months'][m]['days'][d]['hours'][h-1]['power_output'] - src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] 
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h-1]['power_output'] 
+                            
+
+                        grp_actual_output += src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                power_req = max(0,power_req - grp_actual_output)
+                if power_req < 0.001: #1kW (math error margin)
+                    power_req = 0
+                    break
+            if power_req == 0:
+                break
+        return power_req, sudden_power_drop
+
+def calc_src_power_and_energy(self, y, m, d, h, power_req):
+
+        sudden_power_drop = 0
+        #240405 Instead of doing source wise spinning reserve, there will be scenario level
+        spin_reserve_req = power_req * self.spinning_reserve_perc/100
+        
+        # Group sources by priority
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+
+            power_req_met = False
+            sources = list(group)
+            if not sources or sources[0].metadata['type']['value'] == 'BESS':
+                continue  # Skip empty groups
+            
+            # Use spinning reserve requirements from the first source in the group
+            #spin_reserve_req = sources[0].config['spinning_reserve']
+            
+            current_power_output = 0
+            current_group_capacity = 0
+            current_spinning_reserve = 0
+            
+            for src in sources:
+                status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                if status in [-2, -3]:  # Source is not available
+                    continue
+                
+                # Calculate adjusted capacity based on max loading for current source in group
+                src_capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                if src_capacity == 0:
+                    continue
+                current_group_capacity += src_capacity
+                if status == 0:
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] = 1
+                src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = -0.001
+                if current_group_capacity >= power_req:
+
+                    #if  current_group_capacity - power_req >= spin_reserve_req * current_group_capacity/100:
+                    power_req_met = True
+                    break
+            #if power_req_met:
+                #break
+
+            if current_group_capacity > 0:
+
+                loading_factor = power_req / current_group_capacity if current_group_capacity > 0 else 0
+
+                if loading_factor > 1:
+                    loading_factor = 1
+                grp_actual_output = 0
+                for src in sources:
+
+                    status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                    
+                    if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] == -0.001:
+
+                        #src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = 0
+                        src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = loading_factor * src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                        
+                        if status == 1:
+        
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            #src.ops_data[y]['months'][m]['days'][d]['hours'][h]['spin_reserve'] = src.adjusted_capacity(y,m,d,h) - src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                        
+                        #if utilized and failed
+                        if status == -1:
+                                    
+                            sudden_power_drop += src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = 0
+
+                        if status == 0.5:
+
+                            sudden_power_drop += src.ops_data[y]['months'][m]['days'][d]['hours'][h-1]['power_output'] - src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] 
+                            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = src.ops_data[y]['months'][m]['days'][d]['hours'][h-1]['power_output'] 
+                            
+
+                        grp_actual_output += src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                power_req = max(0,power_req - grp_actual_output)
+                if power_req < 0.001: #1kW (math error margin)
+                    power_req = 0
+                    break
+            if power_req == 0:
+                break
+        #HAVE TO ADD THE BESS STUFF HERE.
+        #CHECK IF SCENARIO WANTS TO USE BESS
+        #THEN FORM A LIST OF BESS SOURCES
+        #ASSIGN POWER, ENERGY AND REDUCE CAPACITY OF NEXT HOUR.
+        if power_req != 0:
+            bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == 'BESS']
+            if bess_sources is not None and self.bess_non_emergency_use:
+
+                bess_total_capacity = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity'] for src in bess_sources)
+                grp_loading_factor = power_req / bess_total_capacity if bess_total_capacity > 0 else 0
+                if grp_loading_factor > 1:
+                    grp_loading_factor = 1
+                grp_actual_output = 0
+                for src in bess_sources:
+
+                    status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                    src_capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = src_power_output = grp_loading_factor * src_capacity
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['energy_output'] = src_power_output
+                    
+                    #get the new hour
+                    year, month, day, hour = self.advance_hour(y,m,d,h)
+                    src.ops_data[year]['months'][month]['days'][day]['hours'][hour]['power_capacity'] = max(0, src_capacity - src_power_output)
+                    grp_actual_output += src_power_output
+                power_req = max(0,power_req - grp_actual_output)
+                if power_req < 0.001: #1kW (math error margin)
+                    power_req = 0
+                    
+        if power_req == 0:
+            self.set_spinning_reserve(y,m,d,h, spin_reserve_req)
+        return power_req, sudden_power_drop
+
+    def set_spinning_reserve(self, y,m,d,h, spin_reserve_req):
+
+        rem_spin_reserve_req = spin_reserve_req
+        excess_power = 0
+        spin_reserve_req_met = False
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+
+            sources = list(group)
+            if sources == None or sources[0].metadata['type']['value'] == 'R':
+                continue
+
+            for src in sources:
+
+                status = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status']
+                power_output = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                capacity = src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_capacity']
+                #then this source has been used to meet the power requirement.
+                if status == 1:
+                    rem_spin_reserve_req -= capacity - power_output
+                #even if src is not running to meet power requirement but is req to be run just to provide spin reserve.    
+                elif status == 0 and src.config['spinning_reserve']:
+
+                    #turn the source on and run the source at its min loading
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] = 1
+                    src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] = src.config['min_loading'] * capacity
+                    excess_power += src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                    rem_spin_reserve_req -= capacity - src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+
+                if rem_spin_reserve_req <=0:
+                    rem_spin_reserve_req = 0
+                    spin_reserve_req = True
+                    break
+            if spin_reserve_req:
+                break
+
+        if excess_power > 0:
+
+            #then we need to run through each source (starting from least P)
+            #and subtract it equally from each group.
+            self.src_list.sort(key=lambda src: src.config['priority'],reversed = True)
+            for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+
+                sources = list(group)
+                total_group_output = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output'] for src in sources)
+
+                #check if the excess power is greater than the group's output. If it is then the group needs to run at min loading.
+                group_adjusted_output = max(total_group_output - excess_power, total_group_output)
+
+            return True
+
+        for group in group_list:
+
+            for src in self.src_list:
+                src_hourly_ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                src_min_output = src_hourly_ops_data['capacity'] * src.config['min_loading']/ 100
+                group['actual_output'] += src_min_output
+                group['reserve'] -= group['actual_output']
+                group['num_sources_req'] = 1
+                rem_power_req = max(0,rem_power_req - group['min_cap'])
+
+                #first take min pwr from sources that have to run
+        for group in group_list:
+
+            group['actual_output'] += min(group['min_cap'], rem_power_req)
+            rem_power_req = max(0,rem_power_req - group['min_cap'])
+            group['reserve'] -= group['actual_output']
+                
+        
+        #then take power by group priority
+        #need to respect spin reserve here
+        for group in group_list:
+            group['actual_output'] += min(group['capacity'],rem_power_req)
+            rem_power_req = max(0,rem_power_req - group['actual_output'])
+            group['reserve'] -= group['actual_output']
+            rem_spin_reserve_req = max(0,rem_spin_reserve_req- group['reserve'])
+            if rem_power_req == 0 and rem_spin_reserve_req == 0:
+                break
+
+
+     for src in sources:
+                src_hourly_ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                
+                if src_hourly_ops_data['status'] in [-2, -3] or src_hourly_ops_data['capacity'] ==0:  # Source is not available
+                    continue
+                #run src at min load and save status. check if req contrib from group to SR is met. If yes, get next group
+                src_hourly_ops_data['power_output'] = src_hourly_ops_data['capacity'] * src.config['min_loading']/100
+                total_output += src_hourly_ops_data['power_output']
+                #0.1 status is to temporarily identify which sources were used to meet initial spin reserve.
+                src_hourly_ops_data['status'] = 0.1 if src_hourly_ops_data['status'] == 0 else src_hourly_ops_data['status']
+                src_hourly_ops_data['reserve'] = src_hourly_ops_data['capacity'] - src_hourly_ops_data['power_output']
+                grp_reserve_req_contrib = max(0, grp_reserve_req_contrib - src_hourly_ops_data['reserve'])
+                if grp_reserve_req_contrib == 0:
+                    break

@@ -165,7 +165,7 @@ class Scenario:
                     min_load_src_count -=1
                     if min_load_src_count == 0:
                         break
-            rem_power_req -= grp_output
+            #rem_power_req -= grp_output
                         
         """
         Sources that need to deliver SR are now configured.
