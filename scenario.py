@@ -357,9 +357,61 @@ class Scenario:
         self.aggregate_data_for_reporting()            
 
     def charge_bess(self,y,m,d,h):
+        
+        bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == "BESS"]
+        #find bess charging requirement- consider only those units which are have not been set to discharge.
+        bess_total_charge_req = sum(
+            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['capacity'] - 
+            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['reserve'] 
+            for src in bess_sources
+            if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3]
+            )
 
         #for each source group in order of priority.
-        #finds its reserve capacity.
+        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+
+            sources = list(group)
+            if not sources or sources[0].metadata['type']['value'] == 'BESS':
+                continue
+            
+            #finds its reserve capacity.
+            group_total_reserve = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['reserve'] \
+                                      for src in sources if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [-1,-2,-3])
+            if group_total_reserve == 0:
+                continue
+        
+            loading_factor = bess_total_charge_req/ group_total_reserve
+            loading_factor = 1 if loading_factor > 1 else loading_factor
+            src_group_will_cover = min(bess_total_charge_req, group_total_reserve)
+            if src_group_will_cover <= 0:
+                continue
+            
+            #Update BESS reserves upgrades from this source group
+            for bess_src in bess_sources:
+
+                bess_src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                year, month, day, hour = self.previous_hour(y,m,d,h)
+                bess_src_prev_hour_data = bess_src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
+                #if bess has been trickle charging undisturbed
+                if bess_src_prev_hour_data['status'] == 0:
+
+                    #keep trickle charging
+                    bess_src_hourly_data['status'] = 0
+                    bess_src_hourly_data['reserve'] = bess_src_prev_hour_data['reserve']
+
+                if bess_src_hourly_data['status'] in [1, -1, -2, -3]:
+                    continue
+                bess_src_hourly_data['reserve'] = (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/loading_factor
+                if bess_src_hourly_data['reserve'] == bess_src_hourly_data['capacity']:
+                    bess_src_hourly_data['status'] = 0
+
+
+            #Update Source outputs as a result of BESS charging contribution.
+
+    
+            #set BESS status values based on group output
+            
+
         #use entire reserve cap to charge bess.
         #take BESS max. charge rate as a sceanrio parameter i.e. 1 or more hours.
         #power, energy out put of each src in source group to set accordingly.
