@@ -325,8 +325,8 @@ class Scenario:
                         power_req = Project.load_data[y][m][d][h]
                         hourly_results['power_req'] = power_req
 
-                        charging_pwr_req = self.set_bess_parameters(y,m,d,h, starting = True)
-                        power_req += charging_pwr_req
+                        #charging_pwr_req = self.set_bess_parameters(y,m,d,h, starting = True)
+                        #power_req += charging_pwr_req
                         #Consumption of sources, update key results in the scenario
                         unserved_power_req, sudden_power_drop = self.calc_src_power_and_energy2(y,m,d,h,power_req)
                         #Use bess only if needed
@@ -355,6 +355,20 @@ class Scenario:
                         # Sort sources by priority for processing
                         self.src_list.sort(key=lambda src: src.config['priority'])
         self.aggregate_data_for_reporting()            
+
+    def charge_bess(self,y,m,d,h):
+
+        #for each source group in order of priority.
+        #finds its reserve capacity.
+        #use entire reserve cap to charge bess.
+        #take BESS max. charge rate as a sceanrio parameter i.e. 1 or more hours.
+        #power, energy out put of each src in source group to set accordingly.
+        #set status and reserve of battery accordingly. (based on 50%)
+        #while power of charging sources will be applied forr the whole eyar.
+
+        #after the above we
+        pass
+
 
     def utilize_reserves(self, y, m, d, h, remaining_demand):
 
