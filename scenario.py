@@ -8,7 +8,7 @@ from project import Project
 from itertools import groupby
 
 class Scenario:
-    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2):
+    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours):
         self.name = name
         self.client_name = client_name
         self.scenario_kpis = {
@@ -17,6 +17,7 @@ class Scenario:
             'Critical Load Interruptions (No.)': 0,
             'Estimated Interruption Loss (M PKR)': 0
         }
+        self.bess_charge_hours = bess_charge_hours
         self.timestamp = datetime.datetime.now()
         self.spinning_reserve_perc = spin_reserve_perc
         #0 means no, 1 means yes with equal distribution, 2 means yes with selection utilization
@@ -356,8 +357,13 @@ class Scenario:
                         self.src_list.sort(key=lambda src: src.config['priority'])
         self.aggregate_data_for_reporting()            
 
-    def charge_bess(self,y,m,d,h):
+    def charge_bess(self, y, m, d, h):
         
+        #assumption that sim starts with full reserve
+        #and a status of 0, so charge req is 0
+        if y==1 and m == 1 and d == 1 and h == 0:
+            return 
+
         bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == "BESS"]
         #find bess charging requirement- consider only those units which are have not been set to discharge.
         bess_total_charge_req = sum(
@@ -366,7 +372,7 @@ class Scenario:
             for src in bess_sources
             if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3]
             )
-
+        bess_total_charge_req /= self.bess_charge_hours
         #for each source group in order of priority.
         for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
 
@@ -396,31 +402,32 @@ class Scenario:
                 if bess_src_prev_hour_data['status'] == 0:
 
                     #keep trickle charging
-                    bess_src_hourly_data['status'] = 0
                     bess_src_hourly_data['reserve'] = bess_src_prev_hour_data['reserve']
-
+                    continue
                 if bess_src_hourly_data['status'] in [1, -1, -2, -3]:
                     continue
+                #this will happen
                 bess_src_hourly_data['reserve'] = (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/loading_factor
                 if bess_src_hourly_data['reserve'] == bess_src_hourly_data['capacity']:
                     bess_src_hourly_data['status'] = 0
 
 
             #Update Source outputs as a result of BESS charging contribution.
+            for src in sources:
 
-    
-            #set BESS status values based on group output
-            
+                src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
 
-        #use entire reserve cap to charge bess.
-        #take BESS max. charge rate as a sceanrio parameter i.e. 1 or more hours.
-        #power, energy out put of each src in source group to set accordingly.
-        #set status and reserve of battery accordingly. (based on 50%)
-        #while power of charging sources will be applied forr the whole eyar.
+                if src_hourly_data['status'] in [-1,-2,-3] or src_hourly_data['capacity'] == 0:
+                    
+                    continue
+                if src_hourly_data['status'] == 0:
+                    src_hourly_data['status'] = 1
+                    src_hourly_data['reserve'] = src_hourly_data['capacity'] 
 
-        #after the above we
-        pass
-
+                src_hourly_data['reserve'] *= loading_factor
+                src_hourly_data['power_output'] = src_hourly_data['energy_output'] = src_hourly_data['capacity'] - src_hourly_data['reserve']   
+                src_group_will_cover -= src_hourly_data['power_output']
+        
 
     def utilize_reserves(self, y, m, d, h, remaining_demand):
 
