@@ -386,7 +386,7 @@ class Scenario:
             
             #finds its reserve capacity.
             group_total_reserve = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['reserve'] \
-                                      for src in sources if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [-1,-2,-3])
+                                      for src in sources if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3])
             if group_total_reserve == 0:
                 continue
         
@@ -402,20 +402,38 @@ class Scenario:
                 bess_src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
                 year, month, day, hour = self.previous_hour(y,m,d,h)
                 bess_src_prev_hour_data = bess_src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
-                #if bess has been trickle charging undisturbed
-                if bess_src_prev_hour_data['status'] == 0:
+                
+                if bess_src_hourly_data['status'] in [-1, -2, -3]:
 
-                    #keep trickle charging
-                    bess_src_hourly_data['reserve'] = bess_src_prev_hour_data['reserve']
+                    #reserves and cap will be zero with no impact on sources.
+                    bess_src_hourly_data['capacity'] = bess_src_hourly_data['reserve'] = 0
                     continue
-                if bess_src_hourly_data['status'] in [1, -1, -2, -3]:
+
+                #if its discharging, it means that other BESS is being utilized.
+                # so again no impact on sources.
+                # other functions will set its reserve.
+                elif bess_src_hourly_data['status'] == 1:
                     continue
-                #this will happen
-                bess_src_hourly_data['reserve'] = (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/loading_factor
-                if bess_src_hourly_data['reserve'] == bess_src_hourly_data['capacity']:
-                    bess_src_hourly_data['status'] = 0
+                
+                #in case of current status (0 - trickle charge)
+                #this will happen if previous hour was 0
+                #or it will happen if this hours status is untouched
+                #i.e. the source is completely unutilized till now 
+                elif bess_src_hourly_data['status'] == 0:
 
-
+                    #if somehow reserve is lower than capacity.
+                    if bess_src_hourly_data['reserve'] < bess_src_hourly_data['capacity']:
+                    
+                        #then since the source group has some power to charnge, we should full charge
+                        bess_src_hourly_data['status'] = 2
+                        bess_src_hourly_data['reserve'] = (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/loading_factor
+                        if bess_src_hourly_data['reserve'] == bess_src_hourly_data['capacity']:
+                            bess_src_hourly_data['status'] = 0                         
+                    
+                    #reserve and capacity are already same.
+                    else:
+                        continue                
+                    
             #Update Source outputs as a result of BESS charging contribution.
             for src in sources:
 
