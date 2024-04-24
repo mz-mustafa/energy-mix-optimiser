@@ -8,7 +8,7 @@ from project import Project
 from itertools import groupby
 
 class Scenario:
-    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours):
+    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours=1):
         self.name = name
         self.client_name = client_name
         self.scenario_kpis = {
@@ -341,9 +341,13 @@ class Scenario:
                         unserved_power_drop = 0
                         load_shed = 0
 
-                        if unserved_power_req <= 0 and sudden_power_drop > 0:
+                        if unserved_power_req <=0:
 
-                            unserved_power_drop,load_shed = self.handle_sudden_power_drop(y, m, d, h, sudden_power_drop)
+                            self.charge_bess(y,m,d,h)
+
+                            if sudden_power_drop > 0:
+
+                                unserved_power_drop,load_shed = self.handle_sudden_power_drop(y, m, d, h, sudden_power_drop)
 
                         _ = self.set_bess_parameters(y,m,d,h, starting = False)
 

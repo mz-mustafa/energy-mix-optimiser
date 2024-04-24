@@ -46,21 +46,6 @@ def set_baseline_src_config():
     src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
                   priority=1, min_loading=0, max_loading=100)
     sources.append(src)
-
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
     
     #==========================================
     
@@ -143,11 +128,6 @@ def set_baseline_src_config():
 
     return sources
 
-def simulate_scenario(scenario):
-
-    scenario.simulate()
-
-
 
 # Main program
 if __name__ == "__main__":
@@ -159,7 +139,14 @@ if __name__ == "__main__":
         src_list = set_baseline_src_config()
         print('sources created and configured')
         #BESS non-Em mode: 0 means none, 1 means yes with equal distribution, 2 means yes with selection utilization
-        sc = Scenario(name = "Baseline", client_name = "Engro",selected_sources=src_list,spin_reserve_perc=0,bess_non_emergency_use=2)
+        sc = Scenario(
+            name = "Baseline", 
+            client_name = "Engro",
+            selected_sources=src_list,
+            spin_reserve_perc=0,
+            bess_non_emergency_use=2,
+            bess_charge_hours=1
+            )
         print('scenario created, strting simulation')
         
         sc.simulate()
