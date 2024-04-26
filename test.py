@@ -30,22 +30,16 @@ def set_baseline_src_config():
     
     #==========================================
     #5MW existing solar plant SRC_4
+    existing_solar_src_list = []
+    for i in range(1,9):
+        
+        src = source_manager.get_source_types_by_name('SRC_4')
+        src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
+                    priority=1, min_loading=0, max_loading=100)
+        existing_solar_src_list.append(src)
+    
+    sources.extend(existing_solar_src_list)
 
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-
-
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
-
-    src = source_manager.get_source_types_by_name('SRC_4')
-    src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
-                  priority=1, min_loading=0, max_loading=100)
-    sources.append(src)
     
     #==========================================
     
@@ -66,11 +60,11 @@ def set_baseline_src_config():
     
     #==========================================
     
-    """
+    
     #1.5MW captive generators SRC_6
     captive_src_list = []
     
-    for i in range(1,7):
+    for i in range(1,4):
         
         captive_src =  source_manager.get_source_types_by_name('SRC_6')
         captive_src.configure(start_year=1, end_year = 12, rating=1.5, rating_unit='MW', spin_reserve=100, 
@@ -78,20 +72,21 @@ def set_baseline_src_config():
         captive_src_list.append(captive_src)
     
     sources.extend(captive_src_list)
-    """
+    
     #==========================================
     """
     #PPA HFO generators SRC_2
     hfo_src_list = []
-    for i in range(1,3):
+    for i in range(1,2):
         
         hfo_src =  source_manager.get_source_types_by_name('SRC_2')
-        hfo_src.configure(start_year=2, end_year = 12, rating=4, rating_unit='MW', spin_reserve=100, 
+        hfo_src.configure(start_year=1, end_year = 12, rating=4, rating_unit='MW', spin_reserve=100, 
                   priority=2, min_loading=10, max_loading=100)
         hfo_src_list.append(hfo_src)
     
     sources.extend(hfo_src_list)
-    
+
+
     hfo_src_list = []
     for i in range(1,2):
         
@@ -118,9 +113,9 @@ def set_baseline_src_config():
     
     #6 x 0.5MW BESS (SRC_3)
     bess_src_list = []
-    for i in range(1,10):
+    for i in range(1,16):
         bess_src = source_manager.get_source_types_by_name('SRC_3')
-        bess_src.configure(start_year=1, end_year = 12, rating = 5, 
+        bess_src.configure(start_year=1, end_year = 12, rating = 10, 
                            rating_unit='MWh', spin_reserve=0, priority=5, min_loading=0, max_loading=100)
         bess_src_list.append(bess_src)
     sources.extend(bess_src_list)

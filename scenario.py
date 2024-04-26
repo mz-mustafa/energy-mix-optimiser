@@ -40,77 +40,7 @@ class Scenario:
                     } for m in range(1, 13)
                 } for y in range(1, 13)}
         self.yearly_results = []
-    
-    def has_stable_source(self,year):
-
-        for src in self.src_list:
-            # Check if 'stability' in metadata and its value is 'STABLE'
-            if src.metadata.get('stability', {}).get('value') == 'STABLE':
-                # Check if the source's start year is not later than the given year
-                if src.config.get('start_year') <= year:
-                    return True  # Found at least one stable source meeting the criteria
-        return False  # No stable source found meeting the criteria
-    
-    def scenario_includes_renewable_src(self, year):
         
-        for src in self.src_list:
-            
-            if src.metadata.get('type', {}).get('value') == 'R':
-                # Check if the source's start year is not later than the given year
-                if src.config.get('start_year') <= year:
-                    return True  # Found at least one stable source meeting the criteria
-        return False  # No renewable source found meeting the criteria
-    
-    def scenario_includes_captive_src(self, year):
-
-        for src in self.src_list:
-            
-            if src.metadata.get('finance', {}).get('value') == 'CAPTIVE':
-                # Check if the source's start year is not later than the given year
-                if src.config.get('start_year') <= year:
-                    return True  # Found at least one stable source meeting the criteria
-        return False  # No renewable source found meeting the criteria
-
-    def advance_hour(self,y,m,d,h, src):
-
-        hour = h
-        day = d
-        month = m
-        year = y
-        hour = h + 1
-        if hour > 23:
-            hour = 0
-            day = d + 1
-            if day > len(src.ops_data[y]['months'][m]['days']):
-                day = 1
-                month = m + 1
-                if month > 12:
-                    month = 1
-                    year = y+1 if y < 12 else 12
-        return year, month, day, hour
-
-    def previous_hour(self,y,m,d,h):
-
-        hour = h
-        day = d
-        month = m
-        year = y
-        hour = h - 1
-        if hour < 0:
-            hour = 23
-            day = day - 1
-            if day == 0:
-                if month == 3:
-                    day = 28
-                elif month in [5, 7, 10, 12]:
-                    day = 30
-                elif month in [1,2,4,6,8,9,11]:
-                    day =31
-                month = m-1
-                if month == 0:
-                    month = 12
-                    y = y - 1 if y > 1 else 1
-        return year,month,day,hour        
 
     def calc_src_power_and_energy2(self, y, m, d, h, power_req):
 
@@ -130,6 +60,8 @@ class Scenario:
                 continue
             
             grp_reserve_req_contrib = power_req * self.spinning_reserve_perc * sources[0].config['spinning_reserve']/(100*100)
+            if grp_reserve_req_contrib == 0:
+                continue
             min_load_src_count = 0
             grp_output = 0
             grp_reserve = 0
@@ -320,13 +252,15 @@ class Scenario:
                 for d in range (1, days+1):
 
                     for h in range (0,24):
+                        if y == 3 and m == 1 and d == 1 and h == 0:
+                            print(y, m, d,h)
 
                         hourly_results = self.hourly_results[y][m][d][h]
                         #set the power requirement
                         power_req = Project.load_data[y][m][d][h]
                         hourly_results['power_req'] = power_req
 
-                        #charging_pwr_req = self.set_bess_parameters(y,m,d,h, starting = True)
+                        self.set_bess_parameters(y,m,d,h, starting = True)
                         #power_req += charging_pwr_req
                         #Consumption of sources, update key results in the scenario
                         unserved_power_req, sudden_power_drop = self.calc_src_power_and_energy2(y,m,d,h,power_req)
@@ -349,7 +283,7 @@ class Scenario:
 
                                 unserved_power_drop,load_shed = self.handle_sudden_power_drop(y, m, d, h, sudden_power_drop)
 
-                        _ = self.set_bess_parameters(y,m,d,h, starting = False)
+                        #_ = self.set_bess_parameters(y,m,d,h, starting = False)
 
                         hourly_results['unserved_power_req'] = unserved_power_req
                         hourly_results['sudden_power_drop'] = sudden_power_drop
@@ -365,10 +299,19 @@ class Scenario:
         
         #assumption that sim starts with full reserve
         #and a status of 0, so charge req is 0
-        if y==1 and m == 1 and d == 1 and h == 0:
-            return 
-
         bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == "BESS"]
+
+        if not bess_sources:
+            return
+        """
+        if y==1 and m == 1 and d == 1 and h == 0:
+            for src in bess_sources:
+                src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                src_hourly_data['reserve'] = src_hourly_data['capacity']
+                src_hourly_data['status'] = 0
+            return
+        """
+        #year, month, day, hour - self.previous_hour(y,m,d,h)
         #find bess charging requirement- consider only those units which are have not been set to discharge.
         bess_total_charge_req = sum(
             src.ops_data[y]['months'][m]['days'][d]['hours'][h]['capacity'] - 
@@ -377,80 +320,103 @@ class Scenario:
             if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3]
             )
         bess_total_charge_req /= self.bess_charge_hours
-        #for each source group in order of priority.
-        for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
+        #If bess charge req is zero then no need to do anything to the sources. but bess must be config.
+        remaining_charge_req = bess_total_charge_req
+        all_groups_charging_output = 0
 
-            sources = list(group)
-            if not sources or sources[0].metadata['type']['value'] == 'BESS':
-                continue
-            
-            #finds its reserve capacity.
-            group_total_reserve = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['reserve'] \
-                                      for src in sources if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3])
-            if group_total_reserve == 0:
-                continue
-        
-            loading_factor = bess_total_charge_req/ group_total_reserve
-            loading_factor = 1 if loading_factor > 1 else loading_factor
-            src_group_will_cover = min(bess_total_charge_req, group_total_reserve)
-            if src_group_will_cover <= 0:
-                continue
-            
-            #Update BESS reserves upgrades from this source group
-            for bess_src in bess_sources:
+        if bess_total_charge_req > 0:
+            #for each source group in order of priority.
+            for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
 
-                bess_src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+                sources = list(group)
+                if not sources or sources[0].metadata['type']['value'] == 'BESS':
+                    continue
+                
+                #finds its reserve capacity.
+                group_total_reserve = sum(src.ops_data[y]['months'][m]['days'][d]['hours'][h]['capacity'] -\
+                                          src.ops_data[y]['months'][m]['days'][d]['hours'][h]['power_output']
+                                        for src in sources if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [-1,-2,-3])
+                if group_total_reserve == 0:
+                    continue
+            
+                loading_factor = remaining_charge_req/ group_total_reserve
+                loading_factor = 1 if loading_factor > 1 else loading_factor
+                src_group_will_cover = min(remaining_charge_req, group_total_reserve)
+                if src_group_will_cover <= 0:
+                    continue
+                remaining_charge_req -= src_group_will_cover
+                all_groups_charging_output += src_group_will_cover
+                #Update Source outputs as a result of BESS charging contribution.
+                for src in sources:
+
+                    src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+
+                    if src_hourly_data['status'] in [-1,-2,-3] or src_hourly_data['capacity'] == 0:
+                        
+                        continue
+                    if src_hourly_data['status'] == 0:
+                        src_hourly_data['status'] = 1
+                        src_hourly_data['reserve'] = src_hourly_data['capacity'] 
+
+                    charge_offered = src_hourly_data['reserve'] * loading_factor
+                    src_hourly_data['power_output'] += charge_offered
+                    src_hourly_data['reserve'] = src_hourly_data['capacity'] - src_hourly_data['power_output']
+                    src_hourly_data['energy_output'] = src_hourly_data['power_output']
+
+                    src_group_will_cover -= charge_offered
+                if remaining_charge_req < 0.01:
+                    remaining_charge_req = 0
+                    break
+
+        req_to_avail_ratio = bess_total_charge_req / all_groups_charging_output if all_groups_charging_output > 0 else 0
+        for bess_src in bess_sources:
+
+            bess_src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+            if y==1 and m == 1 and d == 1 and h == 0:
+                bess_src_prev_hour_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+            else:
                 year, month, day, hour = self.previous_hour(y,m,d,h)
                 bess_src_prev_hour_data = bess_src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
+            
+            if bess_src_hourly_data['status'] in [-1, -2, -3]:
+
+                #reserves and cap will be zero with no impact on sources.
+                bess_src_hourly_data['capacity'] = bess_src_hourly_data['reserve'] = 0
+                continue
+
+            #if its discharging, it means that other BESS is being utilized.
+            # so again no impact on sources.
+            # other functions will set its reserve.
+            elif bess_src_hourly_data['status'] == 1:
+                continue
+            
+            #in case of current status (0 - trickle charge)
+            #this will happen if previous hour was 0
+            #or it will happen if this hours status is untouched
+            #i.e. the source is completely unutilized till now 
+            elif bess_src_hourly_data['status'] == 0:
+
+                if bess_src_prev_hour_data['status'] == 0:
+
+                    bess_src_hourly_data['reserve'] = bess_src_prev_hour_data['reserve']
+
+                #this will only be executed if BESS was in state 1 or 2 in the prev hour.
+                #so technically this condition should always be true if we reach this elif.
+                if bess_src_prev_hour_data['reserve'] < bess_src_prev_hour_data['capacity'] and req_to_avail_ratio > 0:
                 
-                if bess_src_hourly_data['status'] in [-1, -2, -3]:
+                    #current reserve will be equal to previous
+                    bess_src_hourly_data['reserve'] = bess_src_prev_hour_data['reserve']
 
-                    #reserves and cap will be zero with no impact on sources.
-                    bess_src_hourly_data['capacity'] = bess_src_hourly_data['reserve'] = 0
-                    continue
-
-                #if its discharging, it means that other BESS is being utilized.
-                # so again no impact on sources.
-                # other functions will set its reserve.
-                elif bess_src_hourly_data['status'] == 1:
-                    continue
-                
-                #in case of current status (0 - trickle charge)
-                #this will happen if previous hour was 0
-                #or it will happen if this hours status is untouched
-                #i.e. the source is completely unutilized till now 
-                elif bess_src_hourly_data['status'] == 0:
-
-                    #if somehow reserve is lower than capacity.
-                    if bess_src_hourly_data['reserve'] < bess_src_hourly_data['capacity']:
-                    
-                        #then since the source group has some power to charnge, we should full charge
+                    if req_to_avail_ratio > 0:
                         bess_src_hourly_data['status'] = 2
-                        bess_src_hourly_data['reserve'] = (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/loading_factor
-                        if bess_src_hourly_data['reserve'] == bess_src_hourly_data['capacity']:
-                            bess_src_hourly_data['status'] = 0                         
-                    
-                    #reserve and capacity are already same.
-                    else:
-                        continue                
-                    
-            #Update Source outputs as a result of BESS charging contribution.
-            for src in sources:
+                        bess_src_hourly_data['reserve'] += (bess_src_hourly_data['capacity'] - bess_src_hourly_data['reserve'])/req_to_avail_ratio
+                    #no need to add else here because status is already 0
+                    #and reserve equal to previous reserve.
 
-                src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
-
-                if src_hourly_data['status'] in [-1,-2,-3] or src_hourly_data['capacity'] == 0:
-                    
-                    continue
-                if src_hourly_data['status'] == 0:
-                    src_hourly_data['status'] = 1
-                    src_hourly_data['reserve'] = src_hourly_data['capacity'] 
-
-                src_hourly_data['reserve'] *= loading_factor
-                src_hourly_data['power_output'] = src_hourly_data['energy_output'] = src_hourly_data['capacity'] - src_hourly_data['reserve']   
-                src_group_will_cover -= src_hourly_data['power_output']
-        
-
+                    if bess_src_hourly_data['reserve'] >= bess_src_hourly_data['capacity']:
+                        bess_src_hourly_data['reserve'] = bess_src_hourly_data['capacity']
+                        bess_src_hourly_data['status'] = 0                         
+                               
     def utilize_reserves(self, y, m, d, h, remaining_demand):
 
         for src in self.src_list:
@@ -472,86 +438,6 @@ class Scenario:
                 break
 
         return remaining_demand
-
-
-    def set_bess_parameters(self, y, m, d, h, starting):
-
-        #assumption that sim starts with full reserve
-        #and a status of 0, so charge req is 0
-        if y==1 and m == 1 and d == 1 and h == 0 and starting:
-            return 0
-        
-        #extract BESS sources
-        bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == 'BESS']
-        #iterate over sources
-        bess_charging_energy = 0
-        for src in bess_sources:
-
-            src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
-            #i -1 and -2, -3, then capacity and reserve =0
-        
-            if src_hourly_data['status'] in [-1, -2, -3]:
-
-                src_hourly_data['capacity'] = src_hourly_data['reserve'] = 0
-            
-            else:
-
-                if starting:
-                    #check reserve for previous hour.
-                    year, month, day, hour = self.previous_hour(y,m,d,h)
-                    src_prev_hour_data = src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
-                    #if bess has been trickle charging undisturbed
-                    if src_prev_hour_data['status'] == 0:
-                        
-                        #keep trickle charging
-                        src_hourly_data['status'] = 0
-                        src_hourly_data['reserve'] = src_prev_hour_data['reserve']
-                        bess_charging_energy += src_hourly_data['capacity'] * 0.01
-
-                    #remaining status is 1/ discharging and 2 full charging
-                    else:
-                        #probably not needed because for discharging this will always be true
-                        if src_prev_hour_data['reserve'] < src_prev_hour_data['capacity']:
-                            
-                            #full charge
-                            src_hourly_data['status'] = 2
-                            max_charge_energy_av = src_prev_hour_data['capacity']/4
-                            charging_req = src_prev_hour_data['capacity'] - src_prev_hour_data['reserve']
-                            #this will be charging that can happen during the hour.
-                            actual_charging = min(charging_req, max_charge_energy_av)
-                            #we are assuming that the bess will be charged throughout, which might not be the case.
-                            bess_charging_energy += actual_charging
-                            
-                            #for now, we add 50% of actual charging to the reserve.
-                            #to simulate that the full cap may not be achieved.
-                            src_hourly_data['reserve'] = min(src_hourly_data['capacity'], src_prev_hour_data['reserve'] + (max_charge_energy_av/2))
-                            
-                            if src_hourly_data['reserve'] == src_hourly_data['capacity']:
-                                src_hourly_data['status'] == 0
-
-                        else:
-                            src_hourly_data['status'] = 0
-                            src_hourly_data['reserve'] = src_prev_hour_data['reserve']
-                #if the function is ending
-                else:
-                    #this means that the bess is still in full charge
-                    if src_hourly_data['status'] == 2:
-                        #and that the reserve can be topped up.
-                        year, month, day, hour = self.previous_hour(y,m,d,h)
-                        src_prev_hour_data = src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
-
-                        src_hourly_data['reserve'] = min(src_hourly_data['capacity'], 
-                                                         src_hourly_data['reserve'] + (
-                                                             0.5*src_prev_hour_data['capacity']/4))
-                        if src_hourly_data['reserve'] == src_hourly_data['capacity']:
-                            src_hourly_data['status'] == 0
-                    
-                    #there is no need to test for 0 (trickle) and 1 (discharging) conditions
-                    #in case of 0, there is no change to what is set in the starting block
-                    #in case of 1, other simulate functions changed the state
-                    #so it means that reserve has already been reduced and status changed.
-        return bess_charging_energy
-
     
     def handle_sudden_power_drop(self, y, m, d, h, initial_deficit_power):
 
@@ -574,23 +460,17 @@ class Scenario:
             #the block acceptance == 0 condition will filter out all solar sources, which is correct.
             if not sources or sources[0].metadata['block_load_acceptance']['value'] == 0: 
                 continue
-            #we do this, because BESS is the only instaneous source that can handle sudden deficits
-            elif sources[0].metadata['type']['value'] == 'BESS': 
-                
-                for src in sources:
-                    if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [-1, -2, -3]:
-                        src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] = 1
-            
-            sources = list(filter(lambda src: src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] == 1, sources))
+
+            if sources[0].metadata['type']['value'] != 'BESS': 
+                sources = list(filter(lambda src: src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] == 1, sources))
+            else:
+                #only BESS can respond to sudden changes regardless of state
+                sources = list(filter(lambda src: src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [-1,-2,-3], sources))    
 
             if not sources:
                 continue  # Skip groups with no operational sources
 
-            # Distribute deficit among sources and get updated acceptance and reserves
-            if block_acceptance <= 0:
-                src_group_block_acceptance = 0
-            else:
-                deficit_power = self.distribute_deficit_among_sources(y, m, d, h, sources, deficit_power, block_acceptance)
+            deficit_power = self.distribute_deficit_among_sources(y, m, d, h, sources, deficit_power, block_acceptance)
 
             # Check if deficit is fully managed
             if deficit_power <= 0:
@@ -627,18 +507,21 @@ class Scenario:
             src_hourly_ops_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
             # Calculate each source's contribution based on its reserve
             src_contribution = (src_hourly_ops_data['reserve']/ src_group_reserve) * contribution
+            contrib_ratio = src_contribution/ src_hourly_ops_data['reserve'] if src_contribution > 0 else 0
             src_hourly_ops_data['power_output'] += src_contribution
             src_hourly_ops_data['energy_output'] += src_contribution
             src_hourly_ops_data['reserve'] -= src_contribution
             
             if src.metadata['type']['value'] == 'BESS':
+                original_state = src_hourly_ops_data['status']
+                if src_contribution > 0:
+                    src_hourly_ops_data['status'] = 1
+                #bess_src_consumption = src_hourly_ops_data['capacity'] - src_hourly_ops_data['reserve']
+                    if contrib_ratio <= 0.2:
 
-                bess_src_consumption = src_hourly_ops_data['capacity'] - src_hourly_ops_data['reserve']
-                if bess_src_consumption <= 0.25 * src_hourly_ops_data['capacity']:
-
-                    #we assume that BESS will charged back to full capacity within the hour.
-                    src_hourly_ops_data['status'] = 0
-                    src_hourly_ops_data['reserve'] = src_hourly_ops_data['capacity']
+                        #we assume that BESS will return to original state
+                        src_hourly_ops_data['status'] = original_state
+                        src_hourly_ops_data['reserve'] += src_contribution
 
             deficit = max(0,deficit - src_contribution)
 
@@ -647,6 +530,43 @@ class Scenario:
                 break
         return deficit
     
+    def set_bess_parameters(self, y, m, d, h, starting):
+
+        #assumption that sim starts with full reserve
+        #and a status of 0, so charge req is 0
+        if y==1 and m == 1 and d == 1 and h == 0 and starting:
+            return
+        
+        #extract BESS sources
+        bess_sources = [src for src in self.src_list if src.metadata['type']['value'] == 'BESS']
+        #iterate over sources
+        #bess_charging_energy = 0
+        for src in bess_sources:
+
+            src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
+            #i -1 and -2, -3, then capacity and reserve =0
+        
+            if src_hourly_data['status'] in [-1, -2, -3]:
+
+                src_hourly_data['capacity'] = src_hourly_data['reserve'] = 0
+            
+            else:
+
+                if starting:
+                    #check reserve for previous hour.
+                    year, month, day, hour = self.previous_hour(y,m,d,h)
+                    src_prev_hour_data = src.ops_data[year]['months'][month]['days'][day]['hours'][hour]
+                    #whatever the status of previous hour.
+                    #we don't know whether this can be charged, used, etc.
+                    #so we have to put it on neutral state
+                    if src_prev_hour_data['status'] in [0,1,2]:
+                        
+                        #keep in neutral state
+                        src_hourly_data['status'] = 0
+                        src_hourly_data['reserve'] = src_prev_hour_data['reserve']
+                        #bess_charging_energy += src_hourly_data['capacity'] * 0.01
+
+
     def generate_log(self, y, m, d, h, unserved_power_req, deficit_power,load_shed):
 
         # Identifying failed and reduced output sources
@@ -678,7 +598,6 @@ class Scenario:
             full_log = "Normal Operation"
         return full_log
 
-
     def aggregate_data_for_reporting(self):
 
         for src in self.src_list:
@@ -688,7 +607,6 @@ class Scenario:
             src.aggregate_year_stats()
         self.aggregate_yearly_data_for_csv()
         self.calculate_scenario_kpis()
-
 
     def calculate_scenario_kpis(self):
         # Ensure that yearly_data has been populated
@@ -709,7 +627,6 @@ class Scenario:
             'Estimated Interruption Loss (M PKR)': interr_loss,
             'Non-critical Load shedding events': load_shed_events,
         }
-
 
     def aggregate_yearly_data_for_csv(self):
         
@@ -851,4 +768,52 @@ class Scenario:
         df.to_csv('data/hourly_data.csv', index=False)
 
 
+    def advance_hour(self,y,m,d,h, src):
+
+        hour = h
+        day = d
+        month = m
+        year = y
+        hour = h + 1
+        if hour > 23:
+            hour = 0
+            day = d + 1
+            if day > len(src.ops_data[y]['months'][m]['days']):
+                day = 1
+                month = m + 1
+                if month > 12:
+                    month = 1
+                    year = y+1 if y < 12 else 12
+        return year, month, day, hour
+
+    def previous_hour(self, y, m, d, h):
+        hour = h - 1
+        day = d
+        month = m
+        year = y
         
+        # Handle hour rollover
+        if hour < 0:
+            hour = 23
+            day -= 1
+
+        # Handle day rollover
+        if day == 0:
+            month -= 1
+            if month == 0:
+                month = 12
+                year -= 1
+                # Ensure year does not go below 1
+                if year < 1:
+                    year = 1
+                    
+            # Determine the last day of the month
+            if month == 2:
+                day = 28
+            elif month in [4, 6, 9, 11]:
+                day = 30
+            else:
+                day = 31
+
+        return year, month, day, hour
+    
