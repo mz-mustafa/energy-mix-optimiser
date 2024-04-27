@@ -8,4 +8,6 @@ FETCH_HEAD
 README.md
 temp.py
 Reporting/
-project data/
+project data/   
+data/hourly_data.csv
+summary_output.csv
