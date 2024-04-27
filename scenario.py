@@ -8,7 +8,7 @@ from project import Project
 from itertools import groupby
 
 class Scenario:
-    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours=1):
+    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours=1,bess_priority_wise_use = True):
         self.name = name
         self.client_name = client_name
         self.scenario_kpis = {
@@ -22,6 +22,7 @@ class Scenario:
         self.spinning_reserve_perc = spin_reserve_perc
         #0 means no, 1 means yes with equal distribution, 2 means yes with selection utilization
         self.bess_non_emergency_use = bess_non_emergency_use
+        self.bess_priority_wise_use = bess_priority_wise_use
         self.src_list = selected_sources
         self.src_list.sort(key=lambda src: src.config['priority'])
         self.hourly_results = {
@@ -108,9 +109,14 @@ class Scenario:
         for priority, group in groupby(self.src_list, key=lambda x: x.config['priority']):
             
             sources = list(group)
-            if not sources or sources[0].metadata['type']['value'] == 'BESS':
+            if not sources:
                 continue
-            
+            if sources[0].metadata['type']['value'] == 'BESS' and self.bess_priority_wise_use:
+                rem_power_req = self.bess_non_em_contribution(y,m,d,h,rem_power_req)
+                if rem_power_req == 0:
+                    break
+                continue
+                
             grp_potential_output = 0
             grp_output = 0
 
@@ -252,8 +258,10 @@ class Scenario:
                 for d in range (1, days+1):
 
                     for h in range (0,24):
-                        if y == 3 and m == 1 and d == 1 and h == 0:
-                            print(y, m, d,h)
+                        if y == 1 and m == 1 and d== 19 and h == 8:
+                            print('we are bloody here')
+                        if self.src_list[0].ops_data[1]['months'][1]['days'][19]['hours'][8]['capacity'] == 0:
+                            print('solar capacity has just become zero')
 
                         hourly_results = self.hourly_results[y][m][d][h]
                         #set the power requirement
@@ -269,7 +277,7 @@ class Scenario:
 
                            unserved_power_req = self.utilize_reserves(y,m,d,h,unserved_power_req)
 
-                        if unserved_power_req > 0 and self.bess_non_emergency_use in [1,2]:
+                        if unserved_power_req > 0 and self.bess_non_emergency_use in [1,2] and not self.bess_priority_wise_use:
                             unserved_power_req = self.bess_non_em_contribution(y,m,d,h,unserved_power_req)
                         
                         unserved_power_drop = 0

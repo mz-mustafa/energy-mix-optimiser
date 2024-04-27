@@ -68,7 +68,7 @@ def set_baseline_src_config():
         
         captive_src =  source_manager.get_source_types_by_name('SRC_6')
         captive_src.configure(start_year=1, end_year = 12, rating=1.5, rating_unit='MW', spin_reserve=100, 
-                  priority=4, min_loading=10, max_loading=100)
+                  priority=2, min_loading=10, max_loading=100)
         captive_src_list.append(captive_src)
     
     sources.extend(captive_src_list)
@@ -110,13 +110,12 @@ def set_baseline_src_config():
     
     #==========================================
 
-    
     #6 x 0.5MW BESS (SRC_3)
     bess_src_list = []
     for i in range(1,16):
         bess_src = source_manager.get_source_types_by_name('SRC_3')
         bess_src.configure(start_year=1, end_year = 12, rating = 10, 
-                           rating_unit='MWh', spin_reserve=0, priority=5, min_loading=0, max_loading=100)
+                           rating_unit='MWh', spin_reserve=0, priority=3, min_loading=0, max_loading=100)
         bess_src_list.append(bess_src)
     sources.extend(bess_src_list)
 
@@ -140,9 +139,10 @@ if __name__ == "__main__":
             selected_sources=src_list,
             spin_reserve_perc=0,
             bess_non_emergency_use=2,
-            bess_charge_hours=1
+            bess_charge_hours=1,
+            bess_priority_wise_use=True,
             )
-        print('scenario created, strting simulation')
+        print('scenario created, starting simulation')
         
         sc.simulate()
         print('simulation complete.')
