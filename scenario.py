@@ -8,14 +8,14 @@ from project import Project
 from itertools import groupby
 
 class Scenario:
-    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours=1,bess_priority_wise_use = True):
+    def __init__(self, name, client_name, selected_sources, spin_reserve_perc=20, bess_non_emergency_use = 2,bess_charge_hours=1,bess_priority_wise_use = True,charge_ratio_night = 30):
         self.name = name
         self.client_name = client_name
         self.scenario_kpis = {
-            'Average Unit Cost (PKR/kWh)': 0,
+            'Average Unit Cost ($/kWh)': 0,
             'Energy Fulfillment Ratio (%)': 0,
             'Critical Load Interruptions (No.)': 0,
-            'Estimated Interruption Loss (M PKR)': 0
+            'Estimated Interruption Loss (M $)': 0
         }
         self.bess_charge_hours = bess_charge_hours
         self.timestamp = datetime.datetime.now()
@@ -23,6 +23,7 @@ class Scenario:
         #0 means no, 1 means yes with equal distribution, 2 means yes with selection utilization
         self.bess_non_emergency_use = bess_non_emergency_use
         self.bess_priority_wise_use = bess_priority_wise_use
+        self.charge_ratio_night = charge_ratio_night
         self.src_list = selected_sources
         self.src_list.sort(key=lambda src: src.config['priority'])
         self.hourly_results = {
@@ -228,11 +229,16 @@ class Scenario:
                 
                     src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
                     if src_hourly_data['status'] not in [-1, -2, -3]:
-
+                        
+                        if src_hourly_data['reserve'] == 0:
+                            src_hourly_data['status'] = 0
+                            continue    
+                        else:
+                            src_hourly_data['status'] = 1
                         src_hourly_data['power_output'] = min(rem_power_req, src_hourly_data['reserve'])
                         src_hourly_data['energy_output'] = src_hourly_data['power_output']
                         src_hourly_data['reserve'] -= src_hourly_data['power_output']
-                        src_hourly_data['status'] = 1
+
                         rem_power_req = max(0,rem_power_req - src_hourly_data['power_output'])
                         if rem_power_req < 0.01:
                             rem_power_req = 0
@@ -258,10 +264,11 @@ class Scenario:
                 for d in range (1, days+1):
 
                     for h in range (0,24):
-                        if y == 1 and m == 1 and d== 19 and h == 8:
-                            print('we are bloody here')
-                        if self.src_list[0].ops_data[1]['months'][1]['days'][19]['hours'][8]['capacity'] == 0:
-                            print('solar capacity has just become zero')
+                        
+                        #if y == 1 and m == 1 and d== 19 and h == 8:
+                        #    print('we are bloody here')
+                        #if self.src_list[0].ops_data[1]['months'][1]['days'][19]['hours'][8]['capacity'] == 0:
+                        #    print('solar capacity has just become zero')
 
                         hourly_results = self.hourly_results[y][m][d][h]
                         #set the power requirement
@@ -312,6 +319,13 @@ class Scenario:
         if not bess_sources:
             return
         """
+        operational_bess_sources = [
+            src for src in bess_sources if 
+            src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] == 1]
+        
+        if operational_bess_sources:
+            return
+        
         if y==1 and m == 1 and d == 1 and h == 0:
             for src in bess_sources:
                 src_hourly_data = src.ops_data[y]['months'][m]['days'][d]['hours'][h]
@@ -327,6 +341,11 @@ class Scenario:
             for src in bess_sources
             if src.ops_data[y]['months'][m]['days'][d]['hours'][h]['status'] not in [1,-1,-2,-3]
             )
+        bess_total_deficit = bess_total_charge_req
+        #night time reduction in charging.
+        if h > 18 or h < 9:
+            bess_total_charge_req *= self.charge_ratio_night/100 
+
         bess_total_charge_req /= self.bess_charge_hours
         #If bess charge req is zero then no need to do anything to the sources. but bess must be config.
         remaining_charge_req = bess_total_charge_req
@@ -338,6 +357,10 @@ class Scenario:
 
                 sources = list(group)
                 if not sources or sources[0].metadata['type']['value'] == 'BESS':
+                    continue
+
+                #experiment, what happens if we don't allow diesel to charge BESS during day time.
+                if h > 8 and h < 18 and sources[0].metadata['generic_name']['value'] == "Captive DG Sets":
                     continue
                 
                 #finds its reserve capacity.
@@ -376,7 +399,7 @@ class Scenario:
                     remaining_charge_req = 0
                     break
 
-        req_to_avail_ratio = bess_total_charge_req / all_groups_charging_output if all_groups_charging_output > 0 else 0
+        req_to_avail_ratio = bess_total_deficit / all_groups_charging_output if all_groups_charging_output > 0 else 0
         for bess_src in bess_sources:
 
             bess_src_hourly_data = bess_src.ops_data[y]['months'][m]['days'][d]['hours'][h]
@@ -613,7 +636,7 @@ class Scenario:
             src.aggregate_day_stats()
             src.aggregate_month_stats()
             src.aggregate_year_stats()
-        self.aggregate_yearly_data_for_csv()
+        self.aggregate_yearly_data_for_csv2()
         self.calculate_scenario_kpis()
 
     def calculate_scenario_kpis(self):
@@ -622,17 +645,17 @@ class Scenario:
             print("Yearly data is not available. Please aggregate yearly data first.")
             return
 
-        avg_unit_cost = sum(year_record['Unit Cost (PKR/kWh)'] for year_record in self.yearly_results) / len(self.yearly_results)
+        avg_unit_cost = sum(year_record['Unit Cost ($/kWh)'] for year_record in self.yearly_results) / len(self.yearly_results)
         avg_enr_fulfill = sum(year_record['Energy Fulfilment Ratio (%)'] for year_record in self.yearly_results) / len(self.yearly_results)
         critical_load_interr = sum(year_record['Critical Load Interruptions'] for year_record in self.yearly_results)
         interr_loss = sum(year_record['Estimated Loss due to Interruptions'] for year_record in self.yearly_results)
         load_shed_events = sum(year_record['Non-critical Load shedding events'] for year_record in self.yearly_results)
         # Update the scenario_kpis dictionary with the calculated values
         self.scenario_kpis = {
-            'Average Unit Cost (PKR/kWh)': avg_unit_cost,
+            'Average Unit Cost ($/kWh)': avg_unit_cost,
             'Energy Fulfillment Ratio (%)': avg_enr_fulfill,
             'Critical Load Interruptions (No.)': critical_load_interr,
-            'Estimated Interruption Loss (M PKR)': interr_loss,
+            'Estimated Interruption Loss (M $)': interr_loss,
             'Non-critical Load shedding events': load_shed_events,
         }
 
@@ -682,7 +705,7 @@ class Scenario:
 
             total_cost_m_pkr = estimated_loss_due_to_interruptions + total_cost_of_operation 
 
-            # Calculate Unit Cost (PKR/kWh), ensuring no division by zero
+            # Calculate Unit Cost ($/kWh), ensuring no division by zero
             if total_energy_req > 0:
                 unit_cost_pkr_per_kwh = (total_cost_m_pkr * 1000) / total_energy_req
             else:
@@ -695,8 +718,8 @@ class Scenario:
             'Critical Load Interruptions': round(critical_load_interruptions,2),
             'Estimated Loss due to Interruptions': round(estimated_loss_due_to_interruptions,2),
             'Non-critical Load shedding events': load_shed_events,
-            'Total Cost (M PKR)': round(total_cost_m_pkr,2),
-            'Unit Cost (PKR/kWh)': round(unit_cost_pkr_per_kwh,2)
+            'Total Cost (M $)': round(total_cost_m_pkr,2),
+            'Unit Cost ($/kWh)': round(unit_cost_pkr_per_kwh,2)
             }
 
             # Aggregate data for each source
@@ -712,13 +735,141 @@ class Scenario:
                 source_data.append({
                     f'{source_name} energy output (MWh)': round(source_energy_output,2),
                     f'{source_name} year operating proportion (%)': round(source_op_proportion * 100,2),
-                    f'{source_name} total cost of operation (M PKR)': round(source_total_cost,2),
-                    f'{source_name} unit cost (PKR/kWh)': round(source_unit_cost,2),
+                    f'{source_name} total cost of operation (M $)': round(source_total_cost,2),
+                    f'{source_name} unit cost ($/kWh)': round(source_unit_cost,2),
                 })
             
             year_record.update({k: v for source_dict in source_data for k, v in source_dict.items()})
             self.yearly_results.append(year_record)
-        
+    
+    def aggregate_yearly_data_for_csv2(self):
+
+        self.yearly_results.clear()
+        for y in range(1, 13):
+            total_energy_req = 0
+            unserved_instances = 0
+            critical_load_interruptions = 0
+            load_shed_events = 0
+
+            # Summing total energy requirements
+            for m in range(1, 13):
+                if m == 2:  # February
+                    days = 28
+                elif m in [4, 6, 9, 11]:  # April, June, September, November
+                    days = 30
+                else:  # All other months
+                    days = 31
+
+                for d in range(1, days+1):
+                    for h in range(24):
+                        hour_data = self.hourly_results[y][m][d][h]
+                        total_energy_req += hour_data['power_req']
+                        if hour_data['unserved_power_req'] > 0.01:
+                            unserved_instances += 1
+                            critical_load_interruptions += 1
+                        if hour_data['unserved_power_drop'] > 0.01:
+                            critical_load_interruptions += 1
+                        if hour_data['load_shed'] > 0:
+                            load_shed_events += 1
+
+            # Calculate Energy Fulfilment Ratio (%)
+            total_rows = 365 * 24
+            energy_fulfilment_ratio = 100 * (1 - (unserved_instances / total_rows))
+
+            # Calculate Estimated Loss due to Interruptions
+            estimated_loss_due_to_interruptions = (critical_load_interruptions * Project.site_data['loss_during_failure']) / 1000000
+
+            # Initialize variable for total cost of operation across all sources
+            total_cost_of_operation = 0
+
+            # Aggregate total cost of operation from each source for the year
+            for src in self.src_list:
+                source_year_data = src.ops_data.get(y, {})
+                total_cost_of_operation += source_year_data.get('year_cost_of_operation', 0)
+
+            total_cost_m_pkr = estimated_loss_due_to_interruptions + total_cost_of_operation 
+
+            # Calculate Unit Cost ($/kWh), ensuring no division by zero
+            if total_energy_req > 0:
+                overall_unit_cost = (total_cost_m_pkr * 1000) / total_energy_req
+            else:
+                overall_unit_cost = 0  # Avoid division by zero
+
+            year_record = {
+                'year': y,
+                'total_energy_requirement (MWh)': round(total_energy_req, 2),
+                'Energy Fulfilment Ratio (%)': round(energy_fulfilment_ratio, 2),
+                'Critical Load Interruptions': round(critical_load_interruptions, 2),
+                'Estimated Loss due to Interruptions': round(estimated_loss_due_to_interruptions, 2),
+                'Non-critical Load shedding events': load_shed_events,
+                'Total Cost (M $)': round(total_cost_m_pkr, 2),
+                'Unit Cost ($/kWh)': round(overall_unit_cost, 2)
+            }
+
+            # Initialize variables for aggregation
+            source_aggregates = {}
+
+            # Aggregate total cost of operation and energy output from each source for the year by generic name
+            for src in self.src_list:
+                generic_name = src.metadata['generic_name']['value']
+                if generic_name not in source_aggregates:
+                    source_aggregates[generic_name] = {'total_cost': 0, 'total_energy': 0}
+
+                source_year_data = src.ops_data.get(y, {})
+                source_aggregates[generic_name]['total_cost'] += source_year_data.get('year_cost_of_operation', 0)
+                source_aggregates[generic_name]['total_energy'] += source_year_data.get('year_energy_output', 0)
+
+            for name, data in source_aggregates.items():
+
+                if data['total_energy'] > 0:
+                    unit_cost = (data['total_cost'] * 1000) / data['total_energy']
+                else:
+                    unit_cost = 0
+                year_record.update({
+                    f'{name} Total Energy Output (MWh)': round(data['total_energy'], 2),
+                    f'{name} Total Cost of Operation (M $)': round(data['total_cost'], 2),
+                    f'{name} Unit Cost ($/kWh)': round(unit_cost, 2),
+                })
+
+            self.yearly_results.append(year_record)
+
+
+
+
+    def aggregate_power_output_by_source_and_year(self):
+
+        # Dictionary to hold results: {generic_name: {year: total_power_output, 'all_years': total_over_all_years}}
+        output_by_source = {}
+
+        # Iterate over each source in the source list
+        for src in self.src_list:
+            generic_name = src.metadata['generic_name']['value']
+
+            # Initialize the generic source name if not already done
+            if generic_name not in output_by_source:
+                output_by_source[generic_name] = {'all_years': 0}
+
+            # Access each year in the ops_data of the source
+            for y in src.ops_data:
+                if y not in output_by_source[generic_name]:
+                    output_by_source[generic_name][y] = 0
+
+                # Sum power output for each month, day, and hour
+                for m in src.ops_data[y]['months']:
+                    for d in src.ops_data[y]['months'][m]['days']:
+                        for h in src.ops_data[y]['months'][m]['days'][d]['hours']:
+                            power_output = src.ops_data[y]['months'][m]['days'][d]['hours'][h].get('power_output', 0)
+                            output_by_source[generic_name][y] += power_output
+                            output_by_source[generic_name]['all_years'] += power_output
+
+        # Print the results
+        for generic_name in sorted(output_by_source):
+            print(f"Generic Source: {generic_name}")
+            for y in sorted([key for key in output_by_source[generic_name] if key != 'all_years']):
+                print(f"  Year: {y}, Total Power Output: {output_by_source[generic_name][y]}")
+            print(f"  Total across all years: {output_by_source[generic_name]['all_years']}")
+
+
     def write_yearly_data_to_csv(self, filepath):
 
         if self.yearly_results:
@@ -727,6 +878,21 @@ class Scenario:
                 dict_writer = csv.DictWriter(output_file, keys)
                 dict_writer.writeheader()
                 dict_writer.writerows(self.yearly_results)
+
+    import pandas as pd
+
+    def write_yearly_data_to_csv2(self, filepath):
+        # Convert yearly results to a pandas DataFrame
+        if self.yearly_results:
+            df = pd.DataFrame(self.yearly_results)
+
+            # Try to load the existing Excel file if it exists
+            try:
+                with pd.ExcelWriter(filepath, mode='a', engine='openpyxl', if_sheet_exists='new') as writer:
+                    df.to_excel(writer, sheet_name='Yearly Data', index=False)
+            except FileNotFoundError:
+                # If the file does not exist, create a new one
+                df.to_excel(filepath, sheet_name='Yearly Data', index=False)
 
     def write_hourly_data_to_csv(self):
      

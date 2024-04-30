@@ -31,7 +31,7 @@ def set_baseline_src_config():
     #==========================================
     #5MW existing solar plant SRC_4
     existing_solar_src_list = []
-    for i in range(1,9):
+    for i in range(1,2):
         
         src = source_manager.get_source_types_by_name('SRC_4')
         src.configure(start_year=1, end_year = 12,rating=5, rating_unit='MW', spin_reserve=0, 
@@ -39,19 +39,57 @@ def set_baseline_src_config():
         existing_solar_src_list.append(src)
     
     sources.extend(existing_solar_src_list)
-
     
     #==========================================
     
-    """
     #5MW new solar plant
     
     solar_src_list = []
-    for i in range(1,3):
+    for i in range(1,9):
         
         solar_src =  source_manager.get_source_types_by_name('SRC_1')
-        solar_src.configure(start_year=2, end_year = 12, rating=2.5, rating_unit='MW', spin_reserve=0, 
-                  priority=2, min_loading=0, max_loading=100)
+        solar_src.configure(start_year=1, end_year = 12, rating=5, rating_unit='MW', spin_reserve=0, 
+                  priority=1, min_loading=0, max_loading=100)
+        solar_src_list.append(solar_src)
+    
+    sources.extend(solar_src_list)
+
+    solar_src_list = []
+    for i in range(1,2):
+        
+        solar_src =  source_manager.get_source_types_by_name('SRC_1')
+        solar_src.configure(start_year=3, end_year = 12, rating=5, rating_unit='MW', spin_reserve=0, 
+                  priority=1, min_loading=0, max_loading=100)
+        solar_src_list.append(solar_src)
+    
+    sources.extend(solar_src_list)
+    
+    solar_src_list = []
+    for i in range(1,2):
+        
+        solar_src =  source_manager.get_source_types_by_name('SRC_1')
+        solar_src.configure(start_year=5, end_year = 12, rating=5, rating_unit='MW', spin_reserve=0, 
+                  priority=1, min_loading=0, max_loading=100)
+        solar_src_list.append(solar_src)
+    
+    sources.extend(solar_src_list)
+
+    solar_src_list = []
+    for i in range(1,2):
+        
+        solar_src =  source_manager.get_source_types_by_name('SRC_1')
+        solar_src.configure(start_year=8, end_year = 12, rating=5, rating_unit='MW', spin_reserve=0, 
+                  priority=1, min_loading=0, max_loading=100)
+        solar_src_list.append(solar_src)
+    
+    sources.extend(solar_src_list)
+    """
+    solar_src_list = []
+    for i in range(1,2):
+        
+        solar_src =  source_manager.get_source_types_by_name('SRC_1')
+        solar_src.configure(start_year=10, end_year = 12, rating=5, rating_unit='MW', spin_reserve=0, 
+                  priority=1, min_loading=0, max_loading=100)
         solar_src_list.append(solar_src)
     
     sources.extend(solar_src_list)
@@ -60,15 +98,14 @@ def set_baseline_src_config():
     
     #==========================================
     
-    
     #1.5MW captive generators SRC_6
     captive_src_list = []
     
-    for i in range(1,4):
+    for i in range(1,7):
         
         captive_src =  source_manager.get_source_types_by_name('SRC_6')
         captive_src.configure(start_year=1, end_year = 12, rating=1.5, rating_unit='MW', spin_reserve=100, 
-                  priority=2, min_loading=10, max_loading=100)
+                  priority=3, min_loading=10, max_loading=100)
         captive_src_list.append(captive_src)
     
     sources.extend(captive_src_list)
@@ -109,19 +146,50 @@ def set_baseline_src_config():
     """
     
     #==========================================
-
+    
     #6 x 0.5MW BESS (SRC_3)
     bess_src_list = []
-    for i in range(1,16):
+    for i in range(1,13):
         bess_src = source_manager.get_source_types_by_name('SRC_3')
-        bess_src.configure(start_year=1, end_year = 12, rating = 10, 
-                           rating_unit='MWh', spin_reserve=0, priority=3, min_loading=0, max_loading=100)
+        bess_src.configure(start_year=1, end_year = 12, rating = 5, 
+                           rating_unit='MWh', spin_reserve=0, priority=2, min_loading=0, max_loading=100)
         bess_src_list.append(bess_src)
     sources.extend(bess_src_list)
 
+    bess_src_list = []
+    for i in range(1,2):
+        bess_src = source_manager.get_source_types_by_name('SRC_3')
+        bess_src.configure(start_year=3, end_year = 12, rating = 5, 
+                           rating_unit='MWh', spin_reserve=0, priority=2, min_loading=0, max_loading=100)
+        bess_src_list.append(bess_src)
+    sources.extend(bess_src_list)
+    
+    bess_src_list = []
+    for i in range(1,3):
+        bess_src = source_manager.get_source_types_by_name('SRC_3')
+        bess_src.configure(start_year=5, end_year = 12, rating = 5, 
+                           rating_unit='MWh', spin_reserve=0, priority=2, min_loading=0, max_loading=100)
+        bess_src_list.append(bess_src)
+    sources.extend(bess_src_list)
+
+    bess_src_list = []
+    for i in range(1,3):
+        bess_src = source_manager.get_source_types_by_name('SRC_3')
+        bess_src.configure(start_year=8, end_year = 12, rating = 5, 
+                           rating_unit='MWh', spin_reserve=0, priority=2, min_loading=0, max_loading=100)
+        bess_src_list.append(bess_src)
+    sources.extend(bess_src_list)
+
+    bess_src_list = []
+    for i in range(1,3):
+        bess_src = source_manager.get_source_types_by_name('SRC_3')
+        bess_src.configure(start_year=10, end_year = 12, rating = 5, 
+                           rating_unit='MWh', spin_reserve=0, priority=2, min_loading=0, max_loading=100)
+        bess_src_list.append(bess_src)
+    sources.extend(bess_src_list)
 
     return sources
-
+    
 
 # Main program
 if __name__ == "__main__":
@@ -129,7 +197,7 @@ if __name__ == "__main__":
     start_time = time.time()
     if read_prereq_data():
         print('Prereq data is loaded')
-        output_filepath = 'data/summary_output.csv'
+        output_filepath = 'data/summary_output.xlsx'
         src_list = set_baseline_src_config()
         print('sources created and configured')
         #BESS non-Em mode: 0 means none, 1 means yes with equal distribution, 2 means yes with selection utilization
@@ -141,19 +209,21 @@ if __name__ == "__main__":
             bess_non_emergency_use=2,
             bess_charge_hours=1,
             bess_priority_wise_use=True,
+            charge_ratio_night=2.5
             )
         print('scenario created, starting simulation')
         
         sc.simulate()
         print('simulation complete.')
         print('printing yearly summary')
-        sc.write_yearly_data_to_csv(output_filepath)
+        sc.write_yearly_data_to_csv2(output_filepath)
         print('printing complete')
         print('printing hourly data')
-        sc.write_hourly_data_to_csv()
+        #sc.write_hourly_data_to_csv()
         print('printing complete')
         print('Scenario KPIs below:')
         print(sc.scenario_kpis)
+        sc.aggregate_power_output_by_source_and_year()
 
     end_time = time.time()
     print(f"Run completed in {end_time - start_time} seconds")
