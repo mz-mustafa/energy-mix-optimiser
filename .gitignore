@@ -4,3 +4,5 @@ venv/
 .idea/
 FETCH_HEAD
 README.md
+data/hourly_data.csv
+data/summary_output.xlsx

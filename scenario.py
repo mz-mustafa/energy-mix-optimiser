@@ -833,9 +833,6 @@ class Scenario:
 
             self.yearly_results.append(year_record)
 
-
-
-
     def aggregate_power_output_by_source_and_year(self):
 
         # Dictionary to hold results: {generic_name: {year: total_power_output, 'all_years': total_over_all_years}}
@@ -868,7 +865,6 @@ class Scenario:
             for y in sorted([key for key in output_by_source[generic_name] if key != 'all_years']):
                 print(f"  Year: {y}, Total Power Output: {output_by_source[generic_name][y]}")
             print(f"  Total across all years: {output_by_source[generic_name]['all_years']}")
-
 
     def write_yearly_data_to_csv(self, filepath):
 
