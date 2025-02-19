@@ -1,4 +1,4 @@
-# Energy Mix Optimizer
+# Energy Mix Optimizer (EEM v3)
 
 An AI-powered energy system simulation framework that optimizes generation portfolios using genetic algorithms. The tool models hourly power dispatch, battery management, and source failures over multi-year horizons to evaluate reliability and economic performance of diverse energy mixes.
 
